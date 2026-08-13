@@ -1,0 +1,2 @@
+# 仅 scripts/import_pdf_to_kb.py 需要
+pypdf>=4.2.0

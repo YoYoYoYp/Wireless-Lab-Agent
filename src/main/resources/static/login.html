@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 无线实验室智能体</title>
+    <link rel="stylesheet" href="css/style.css?v=3">
+</head>
+<body class="auth-page">
+    <div class="auth-container">
+        <div class="auth-card">
+            <h1>无线实验室智能体</h1>
+            <p class="auth-subtitle">USRP 设备控制与 SDR 知识中心</p>
+
+            <div class="auth-tabs">
+                <button class="tab active" data-tab="login">登录</button>
+                <button class="tab" data-tab="register">注册</button>
+            </div>
+
+            <form id="loginForm" class="auth-form">
+                <input type="text" id="loginUsername" placeholder="用户名" required autocomplete="username">
+                <input type="password" id="loginPassword" placeholder="密码" required autocomplete="current-password">
+                <button type="submit">登录</button>
+                <p class="auth-error" id="loginError"></p>
+            </form>
+
+            <form id="registerForm" class="auth-form hidden">
+                <input type="text" id="regUsername" placeholder="用户名" required autocomplete="username">
+                <input type="password" id="regPassword" placeholder="密码" required autocomplete="new-password">
+                <button type="submit">注册</button>
+                <p class="auth-error" id="regError"></p>
+            </form>
+        </div>
+    </div>
+    <script src="js/api.js?v=3"></script>
+    <script src="js/auth.js?v=2"></script>
+</body>
+</html>

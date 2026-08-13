@@ -1,0 +1,91 @@
+spring:
+  application:
+    name: wireless-lab-agent
+  profiles:
+    active: local
+  ai:
+    model:
+      chat: openai
+      embedding: dashscope
+    openai:
+      base-url: ${LOCAL_LLM_BASE_URL:http://127.0.0.1:11434/v1}
+      api-key: ${LOCAL_LLM_API_KEY:ollama}
+      chat:
+        completions-path: ${LOCAL_LLM_CHAT_PATH:/chat/completions}
+        options:
+          model: ${LOCAL_LLM_MODEL:qwen3.5:122b}
+          temperature: ${LOCAL_LLM_TEMPERATURE:0.35}
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:}
+      embedding:
+        enabled: true
+        options:
+          model: ${DASHSCOPE_EMBEDDING_MODEL:text-embedding-v4}
+    mcp:
+      client:
+        enabled: ${SDR_MCP_ENABLED:false}
+        request-timeout: 60s
+        sse:
+          connections:
+            agent-sdr:
+              url: ${AGENT_SDR_MCP_URL:http://127.0.0.1:8000/mcp}
+              sse-endpoint: /sse
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/wireless_lab_agent}
+    username: ${DB_USERNAME:admin}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+server:
+  port: ${SERVER_PORT:8123}
+  servlet:
+    context-path: /api
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    - group: default
+      paths-to-match: '/**'
+      packages-to-scan: com.njupt.wirelesslabagent.controller
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+sdr:
+  agent-base-url: ${AGENT_SDR_BASE_URL:http://127.0.0.1:8000}
+  agent-mode: ${SDR_AGENT_MODE:think}
+
+knowledge:
+  bootstrap:
+    enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:true}
+    rebuild: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}
+    version: ${KNOWLEDGE_BUNDLE_VERSION:2026-08-12-v1}
+
+rag:
+  evaluation:
+    min-hit-rate: ${RAG_EVAL_MIN_HIT_RATE:0.85}
+    min-precision: ${RAG_EVAL_MIN_PRECISION:0.55}
+    min-ndcg: ${RAG_EVAL_MIN_NDCG:0.70}
+    min-generation-score: ${RAG_EVAL_MIN_GENERATION_SCORE:3.5}
+    max-out-of-domain-hit-rate: ${RAG_EVAL_MAX_OUT_OF_DOMAIN_HIT_RATE:0.25}
+
+routing:
+  evaluation:
+    min-accuracy: ${ROUTE_EVAL_MIN_ACCURACY:0.85}
+    min-macro-f1: ${ROUTE_EVAL_MIN_MACRO_F1:0.75}
+
+chat:
+  memory:
+    window-size: ${CHAT_MEMORY_WINDOW_SIZE:20}
+    ttl: ${CHAT_MEMORY_TTL:7d}
+    summary-batch-size: ${CHAT_MEMORY_SUMMARY_BATCH_SIZE:6}
+    summary-max-chars: ${CHAT_MEMORY_SUMMARY_MAX_CHARS:1200}
