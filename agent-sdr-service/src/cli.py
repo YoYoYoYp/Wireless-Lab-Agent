@@ -33,7 +33,9 @@ from src.mcp import create_sdr_mcp
 from core.memory import ConversationMemory
 from core.rag import LocalKnowledgeBase
 from hardware.sdr_controller import SDRController
+from hardware.uhd_diagnostics import UhdDiagnosticRunner
 from hardware.video_stream_controller import VideoStreamController
+from tools.registry import create_tool_registry
 
 
 async def main() -> None:
@@ -47,12 +49,19 @@ async def main() -> None:
         release_cb=controller.disconnect_usrp,
         reconnect_cb=controller.reconnect_usrp,
     )
+    diagnostic_runner = UhdDiagnosticRunner(settings.usrp_ip)
 
-    # Build MCP server
-    mcp_server, _tool_registry = create_sdr_mcp(
+    # Build the same validated registry used by the HTTP service.
+    tool_registry = create_tool_registry(
         controller=controller,
         knowledge_base=knowledge_base,
         video_controller=video_controller,
+        diagnostic_runner=diagnostic_runner,
+    )
+    mcp_server = create_sdr_mcp(
+        tool_registry=tool_registry,
+        controller=controller,
+        knowledge_base=knowledge_base,
     )
 
     # Run over stdio — FastMCP 1.28+ unified API

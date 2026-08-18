@@ -1,12 +1,4 @@
-"""SkillSpec – an enhanced ToolSpec for the skill-architecture (Approach A).
-
-Each SkillSpec adds system_prompt and trigger rules to the existing ToolSpec,
-so the LangGraph supervisor can match skills by intent and inject skill-specific
-prompts into the LLM context, instead of relying on OpenAI function-calling.
-
-Skills can be defined either programmatically (SkillSpec dataclass) or via
-markdown files with YAML frontmatter, matching the Claude Code skill pattern.
-"""
+"""Lightweight skill metadata for rule matching and prompt injection."""
 
 from __future__ import annotations
 
@@ -14,26 +6,20 @@ import re
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
-
-from pydantic import BaseModel
-
-from tools import ToolSpec
 
 
 @dataclass
 class SkillSpec:
-    """A self-contained SDR skill wrapping a ToolSpec with matching and prompt metadata."""
+    """Usage guidance for one registered tool; it never executes hardware."""
 
     name: str
     description: str
-    system_prompt: str                      # Injected into LLM context when skill is matched
-    schema_model: type[BaseModel]          # Pydantic model for parameter validation
-    handler: Callable[[BaseModel], dict[str, Any]]  # Execution function
+    target_tool: str
+    system_prompt: str
     category: str = "hardware"
-    trigger_patterns: list[str] = field(default_factory=list)   # Regex patterns for matching
-    trigger_keywords: list[str] = field(default_factory=list)   # Keywords for confidence boost
-    exclude_patterns: list[str] = field(default_factory=list)   # Patterns that disqualify this skill
+    trigger_patterns: list[str] = field(default_factory=list)
+    trigger_keywords: list[str] = field(default_factory=list)
+    exclude_patterns: list[str] = field(default_factory=list)
 
     # ── matching ──
 
@@ -58,23 +44,6 @@ class SkillSpec:
                 score += 0.1
         return min(score, 1.0)
 
-    # ── conversion ──
-
-    def to_tool_spec(self) -> ToolSpec:
-        """Derive a plain ToolSpec for ToolRegistry compatibility."""
-        return ToolSpec(
-            name=self.name,
-            description=self.description,
-            schema_model=self.schema_model,
-            handler=self.handler,
-            category=self.category,
-        )
-
-    def as_openai_tool(self) -> dict[str, Any]:
-        """Generate OpenAI function-calling tool definition (kept for fallback)."""
-        return self.to_tool_spec().as_openai_tool()
-
-
 class SkillRegistry:
     """Register and look up skills by name, category, or pattern matching."""
 
@@ -93,9 +62,6 @@ class SkillRegistry:
 
     def all(self) -> list[SkillSpec]:
         return list(self._skills)
-
-    def as_tool_specs(self) -> list[ToolSpec]:
-        return [s.to_tool_spec() for s in self._skills]
 
     def match(
         self,
@@ -127,8 +93,6 @@ class SkillRegistry:
 
 def load_skill_from_md(
     md_path: str | Path,
-    schema_model: type[BaseModel],
-    handler: Callable[[BaseModel], dict[str, Any]],
 ) -> SkillSpec:
     """Parse a .md skill definition file and return a SkillSpec.
 
@@ -155,9 +119,6 @@ def load_skill_from_md(
 
     Args:
         md_path: Path to the .md file.
-        schema_model: Pydantic model for parameter validation.
-        handler: Execution function.
-
     Returns:
         SkillSpec populated from the markdown file.
     """
@@ -174,6 +135,7 @@ def load_skill_from_md(
     # Extract fields from frontmatter
     name = metadata.get("name", "")
     description = metadata.get("description", "")
+    target_tool = metadata.get("target_tool", name)
     category = metadata.get("category", "hardware")
     trigger_patterns = metadata.get("trigger_patterns", [])
     trigger_keywords = metadata.get("trigger_keywords", [])
@@ -190,9 +152,8 @@ def load_skill_from_md(
     return SkillSpec(
         name=name,
         description=description,
+        target_tool=target_tool,
         system_prompt=system_prompt,
-        schema_model=schema_model,
-        handler=handler,
         category=category,
         trigger_patterns=trigger_patterns,
         trigger_keywords=trigger_keywords,

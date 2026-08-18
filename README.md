@@ -32,7 +32,7 @@
 | Advisors | 保留并接入 | Permission、Memory、日志、RE2，以及单查询、重写、翻译、历史压缩、多查询扩展和 Rerank 链路 |
 | Java Tools | 场景化改造 | `SdrHardwareTool` 负责硬件桥接，`WebSearchTool` 在本地检索证据不足或需要最新资料时调用 Tavily 并保留来源 URL |
 | Spring AI MCP Client | 保留并接入 | `SDR_MCP_ENABLED=true` 时自动加载 Agent_SDR MCP 工具，关闭时回退 HTTP Bridge |
-| Agent_SDR Tools/Skills | 保留并接入 | Python 执行面保留扫频、收发等能力，并新增只允许 UHD 版本、设备发现、参数探测和连通性检查的受限诊断工具；不开放任意终端 |
+| Agent_SDR Tools/Skills | 保留并接入 | Skill 只负责规则匹配与操作说明，统一 ToolRegistry 负责 Pydantic 校验和执行；FastMCP 将同一组工具对外暴露，不开放任意终端 |
 
 ## 架构
 
@@ -47,9 +47,10 @@ flowchart LR
     Router -->|"设备动作"| Tools["Tool Calling"]
     Tools -->|"HTTP Bridge"| SDR["本地 agent-sdr-service / FastAPI"]
     Tools -.->|"可选 MCP / SSE"| SDR
-    SDR --> Diagnostics["UHD 诊断命令白名单"]
+    SDR --> Registry["统一 ToolRegistry / Pydantic 校验"]
+    Registry --> Diagnostics["UHD 诊断命令白名单"]
+    Registry --> UHD["UHD / USRP"]
     Diagnostics --> UHD["UHD / USRP"]
-    SDR --> UHD
     SDR --> Qwen
     Spring --> Memory["20 条活跃窗口 + 滚动摘要"]
     Memory --> Redis[("Redis 用户隔离会话 / 7 天滑动 TTL")]
@@ -149,14 +150,19 @@ wireless-lab-agent/
 │           ├── agent-sdr-demo-01.mp4              # Agent_SDR 上游演示视频
 │           └── agent-sdr-demo-02.mp4              # Agent_SDR 上游演示视频
 ├── agent-sdr-service/                            # 从 Agent_SDR 提取的本地 Python 执行面
-│   ├── src/                                      # Agent Loop、FastAPI、MCP、Skill 注册
+│   ├── src/
+│   │   ├── agent/                                # 本地模型循环与上下文组装
+│   │   └── mcp/adapter.py                        # ToolRegistry 的 MCP SSE/stdio 适配层
 │   ├── hardware/
 │   │   ├── sdr_controller.py                     # UHD/USRP 收发与调制解调
 │   │   └── uhd_diagnostics.py                    # shell=false 的 UHD 命令白名单
 │   ├── skill/
+│   │   ├── skill_spec.py                         # 规则匹配与提示词注入模型
 │   │   └── skills/device_diagnostics.md          # 设备参数诊断 Skill
 │   ├── core/                                     # 会话记忆与知识应用客户端
-│   ├── tools/                                    # Skill 请求模型与兼容工具封装
+│   ├── tools/
+│   │   ├── __init__.py                           # ToolSpec 与统一 ToolRegistry
+│   │   └── registry.py                           # 全部硬件/知识工具一次性组装
 │   ├── tests/test_uhd_diagnostics.py             # 注入、IP校验与白名单测试
 │   ├── static/                                   # 独立 SDR Web 控制台
 │   ├── data/                                     # SDR/USRP 知识资料
