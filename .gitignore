@@ -5,6 +5,12 @@
 application-local.yml
 mcp-servers.json
 chat-memory/
+Note/
+AGENTS.md
+CLAUDE.md
+.codex/
+mcp-server-search-image/
+mcp-server-send-email/
 logs/
 tmp/
 .claude/
@@ -14,8 +20,6 @@ temp_*.yml
 *.log
 *.out
 *.err
-mcp-server-search-image/
-mcp-server-send-email/
 
 
 HELP.md

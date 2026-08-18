@@ -6,8 +6,8 @@
 
 - `src/agent/`：LLM Agent 循环、上下文构建和工具编排。
 - `src/mcp/`：MCP 工具注册及 SSE 服务。
-- `hardware/`：UHD/USRP 扫频、收发、调制解调和 GNU Radio 视频任务控制。
-- `skill/`：知识检索、扫频、Tone、文本收发、自适应发射等 Skill 定义。
+- `hardware/`：UHD/USRP 扫频、收发、调制解调、GNU Radio 视频任务控制，以及受限 UHD 设备诊断。
+- `skill/`：知识检索、扫频、Tone、文本收发、自适应发射和设备参数诊断等 Skill 定义。
 - `core/`：会话记忆与百炼知识应用客户端。
 - `static/`：独立 Web 控制台。
 - `data/`、`scripts/`：SDR 资料与 PDF 文本提取脚本。
@@ -39,6 +39,8 @@ $env:LOCAL_LLM_MODEL='qwen3.5:122b'
 访问 `http://127.0.0.1:8000`。健康检查为 `/api/health`，硬件状态为 `/api/hardware_status`，MCP 挂载点为 `/mcp`。
 
 UHD Python 绑定不通过本项目的 pip 依赖安装，需要按操作系统和 USRP 版本单独配置。未安装 UHD 或未连接设备时，服务仍可启动，但硬件接口只返回离线/驱动缺失状态。
+
+`query_usrp_device_parameters` 工具只允许 `summary`、`find_devices`、`probe_device`、`get_uhd_version` 和 `ping_device` 五类动作。服务端以 `shell=false` 调用固定的 `uhd_config_info`、`uhd_find_devices`、`uhd_usrp_probe` 或 `ping` 参数列表，拒绝任意命令文本、非法 IP，并对每个命令设置超时和输出上限。
 
 ## 与 Java 控制面的关系
 

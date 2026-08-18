@@ -11,6 +11,7 @@ from pathlib import Path
 
 from skill.skill_spec import SkillSpec, SkillRegistry, load_skill_from_md
 from tools.knowledge_tools import SearchKnowledgeRequest
+from tools.device_diagnostic_tools import DeviceDiagnosticsRequest
 from tools.physical_tools import ScanRequest, StopHardwareTaskRequest, ToneLoopbackRequest
 from tools.transmit_tools import AdaptiveTransmitRequest, AutoOptimalTransmitRequest, FskSendRequest
 from tools.video_tools import StartVideoStreamRequest
@@ -23,6 +24,7 @@ _SKILL_DEFS: list[tuple[str, type]] = [
     ("physical_scan.md",       ScanRequest),
     ("tone_loopback.md",       ToneLoopbackRequest),
     ("text_transmit.md",       FskSendRequest),
+    ("device_diagnostics.md",  DeviceDiagnosticsRequest),
     ("adaptive_transmit.md",   AdaptiveTransmitRequest),
     ("cognitive_select.md",    AutoOptimalTransmitRequest),
     ("video_stream.md",        StartVideoStreamRequest),
@@ -44,7 +46,7 @@ def _load_skills() -> dict[str, SkillSpec]:
     return skill_map
 
 
-def build_all_skills(controller, video_controller=None, knowledge_base=None) -> SkillRegistry:
+def build_all_skills(controller, video_controller=None, knowledge_base=None, diagnostic_runner=None) -> SkillRegistry:
     """Build all skills with handlers resolved from the hardware controllers.
 
     Args:
@@ -74,6 +76,11 @@ def build_all_skills(controller, video_controller=None, knowledge_base=None) -> 
     s["auto_optimal_transmit"].handler = lambda payload: controller.auto_optimal_transmit(
         **payload.model_dump(),
     )
+
+    if diagnostic_runner is not None:
+        s["query_usrp_device_parameters"].handler = lambda payload: diagnostic_runner.query(
+            **payload.model_dump(),
+        )
 
     if video_controller is not None:
         s["start_video_stream"].handler = lambda payload: video_controller.start()

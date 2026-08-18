@@ -20,6 +20,7 @@ def create_skill_registry(
     controller: Any = None,
     video_controller: Any = None,
     knowledge_base: Any = None,
+    diagnostic_runner: Any = None,
 ) -> SkillRegistry:
     """Build the skill registry from .md files.
 
@@ -31,4 +32,4 @@ def create_skill_registry(
     The handler lambdas are kept for backward compatibility but are
     not used in the new agent loop.
     """
-    return build_all_skills(controller, video_controller, knowledge_base)
+    return build_all_skills(controller, video_controller, knowledge_base, diagnostic_runner)

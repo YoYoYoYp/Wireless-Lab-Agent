@@ -17,14 +17,22 @@
 - RAG 评估：49 条标注到具体知识来源的 SDR 问题，计算 Hit Rate、Recall、Precision、MAP、NDCG、MRR；生成评测使用实际检索上下文并设置质量门槛。
 - 故障降级：路由器异常回退单查询；查询变换失败回退原始查询；多查询、Rerank、PGVector 分别降级为单查询、粗排和无 RAG 回答。
 
+## 演示与来源
+
+- 硬件执行面参考：[GIN4869623/Agent_SDR](https://github.com/GIN4869623/Agent_SDR)（本项目不会修改或推送该上游仓库）。
+- [Agent_SDR 演示 01](src/main/resources/static/media/agent-sdr-demo-01.mp4)
+- [Agent_SDR 演示 02](src/main/resources/static/media/agent-sdr-demo-02.mp4)
+
+两段视频复制自 Agent_SDR 上游仓库的[原视频 01](https://github.com/GIN4869623/Agent_SDR/blob/main/15a9f62542c0ccde0243d3774e631b2b.mp4)和[原视频 02](https://github.com/GIN4869623/Agent_SDR/blob/main/dbb3bbbb0396fc32b3b7eebeafd0ed33.mp4)。上游仓库当前未声明许可证，视频仅保留来源展示，不表示本项目拥有其版权。
+
 ## 原项目能力复用
 
 | 组件 | 复用情况 | 当前作用 |
 |---|---|---|
 | Advisors | 保留并接入 | Permission、Memory、日志、RE2，以及单查询、重写、翻译、历史压缩、多查询扩展和 Rerank 链路 |
-| Java Tools | 场景化改造 | 使用 `SdrHardwareTool` 统一封装状态查询、实验执行和任务停止；简历、PDF、终端等旧工具不接入无线实验链路 |
+| Java Tools | 场景化改造 | `SdrHardwareTool` 负责硬件桥接，`WebSearchTool` 在本地检索证据不足或需要最新资料时调用 Tavily 并保留来源 URL |
 | Spring AI MCP Client | 保留并接入 | `SDR_MCP_ENABLED=true` 时自动加载 Agent_SDR MCP 工具，关闭时回退 HTTP Bridge |
-| Agent_SDR Tools/Skills | 保留并接入 | Python 执行面保留扫频、Tone、文本收发、自适应调制、认知选频和视频流能力 |
+| Agent_SDR Tools/Skills | 保留并接入 | Python 执行面保留扫频、收发等能力，并新增只允许 UHD 版本、设备发现、参数探测和连通性检查的受限诊断工具；不开放任意终端 |
 
 ## 架构
 
@@ -35,10 +43,13 @@ flowchart LR
     Router --> Qwen["本地 Qwen3.5-122B / OpenAI 兼容接口"]
     Router -->|"静态知识"| Advisors["RAG Advisor Chain"]
     Advisors --> PG[("PostgreSQL + pgvector")]
+    Router -->|"最新资料 / 本地证据不足"| Web["Tavily 联网检索 / 来源 URL"]
     Router -->|"设备动作"| Tools["Tool Calling"]
     Tools -->|"HTTP Bridge"| SDR["本地 agent-sdr-service / FastAPI"]
     Tools -.->|"可选 MCP / SSE"| SDR
-    SDR --> UHD["UHD / USRP"]
+    SDR --> Diagnostics["UHD 诊断命令白名单"]
+    Diagnostics --> UHD["UHD / USRP"]
+    SDR --> UHD
     SDR --> Qwen
     Spring --> Memory["20 条活跃窗口 + 滚动摘要"]
     Memory --> Redis[("Redis 用户隔离会话 / 7 天滑动 TTL")]
@@ -53,8 +64,10 @@ flowchart LR
 
 ```text
 静态知识问题  → SINGLE / REWRITE / COMPRESS / MULTI RAG → PGVector → LLM
+最新/缺失资料 → searchWeb → Tavily → 带来源 URL 的外部证据 → LLM
 硬件动作请求  → NONE → Agent_SDR MCP 工具或 executeSdrInstruction → UHD
 设备状态请求  → getSdrHardwareStatus → Agent_SDR /api/hardware_status
+设备参数诊断  → query_usrp_device_parameters → uhd_config_info / uhd_find_devices / uhd_usrp_probe
 RIS 外部设备  → 已注册的 MCP 工具，不在本地伪造执行结果
 
 降级链路      → MULTI → SINGLE → NONE；Rerank 失败保留粗排结果
@@ -118,7 +131,8 @@ wireless-lab-agent/
 │   │   ├── ChatStreamSessionManager.java         # 流式会话中断
 │   │   └── UserService.java                      # 本地用户与登录会话
 │   └── tools/
-│       └── SdrHardwareTool.java                  # HTTP 兜底硬件工具
+│       ├── SdrHardwareTool.java                  # HTTP 兜底硬件工具
+│       └── WebSearchTool.java                    # Tavily 联网检索与来源归一化
 ├── src/main/resources/
 │   ├── application.yml                           # 环境变量化配置
 │   ├── prompts/wireless-lab-system-prompt.st     # 工具与安全边界
@@ -130,13 +144,20 @@ wireless-lab-agent/
 │   │   ├── agent-sdr-capability-guide.md         # MCP/硬件工具能力目录
 │   │   ├── uhd-troubleshooting-guide.md          # UHD/网络/解调故障诊断
 │   │   └── rf-experiment-safety.md               # 射频回环、发射和供电安全
-│   └── static/                                   # 聊天与设备态势前端
+│   └── static/                                   # 聊天、设备态势与开源演示前端
+│       └── media/
+│           ├── agent-sdr-demo-01.mp4              # Agent_SDR 上游演示视频
+│           └── agent-sdr-demo-02.mp4              # Agent_SDR 上游演示视频
 ├── agent-sdr-service/                            # 从 Agent_SDR 提取的本地 Python 执行面
 │   ├── src/                                      # Agent Loop、FastAPI、MCP、Skill 注册
-│   ├── hardware/                                 # UHD/USRP 与 GNU Radio 控制
-│   ├── skill/                                    # 无线实验 Skill 定义
+│   ├── hardware/
+│   │   ├── sdr_controller.py                     # UHD/USRP 收发与调制解调
+│   │   └── uhd_diagnostics.py                    # shell=false 的 UHD 命令白名单
+│   ├── skill/
+│   │   └── skills/device_diagnostics.md          # 设备参数诊断 Skill
 │   ├── core/                                     # 会话记忆与知识应用客户端
 │   ├── tools/                                    # Skill 请求模型与兼容工具封装
+│   ├── tests/test_uhd_diagnostics.py             # 注入、IP校验与白名单测试
 │   ├── static/                                   # 独立 SDR Web 控制台
 │   ├── data/                                     # SDR/USRP 知识资料
 │   └── scripts/                                  # PDF 知识提取脚本
@@ -150,6 +171,8 @@ wireless-lab-agent/
 │   │   ├── KnowledgeMetadataResolverTest.java    # 分类与元数据单元测试
 │   │   ├── QueryRoutingServiceTest.java           # 标签映射与异常回退
 │   │   └── QueryRoutingEvaluationTest.java        # Accuracy/Macro-F1/混淆矩阵
+│   ├── tools/
+│   │   └── WebSearchToolTest.java                # 缺少密钥闭合失败与来源保留测试
 │   ├── advisor/
 │   │   └── RagFallbackSupportTest.java            # 变换/检索/精排故障注入
 │   ├── evaluation/
@@ -161,7 +184,7 @@ wireless-lab-agent/
 │       ├── RagTest.java
 │       ├── RedisMemoryTest.java                  # Redis 记忆验证
 │       └── ToolTest.java                         # 离线错误不伪造测试
-└── Note/                                         # Spring AI/RAG 学习笔记
+└── .gitignore                                    # 密钥、本地配置、学习笔记与构建产物排除规则
 ```
 
 ## 本地启动
@@ -178,13 +201,14 @@ $env:LOCAL_LLM_CHAT_PATH='/chat/completions'
 $env:LOCAL_LLM_API_KEY='ollama'
 $env:LOCAL_LLM_MODEL='qwen3.5:122b'
 $env:DASHSCOPE_API_KEY='your-key'
+$env:TAVILY_API_KEY='your-key'
 $env:DB_URL='jdbc:postgresql://localhost:5432/wireless_lab_agent'
 $env:DB_USERNAME='admin'
 $env:DB_PASSWORD='your-password'
 $env:REDIS_HOST='localhost'
 ```
 
-Java 主服务只把 ChatModel 切到本地 Qwen3.5-122B；当前向量化与 Rerank 仍使用 DashScope，因此知识入库和检索仍需 `DASHSCOPE_API_KEY`。本地服务只要实现 OpenAI 兼容的 `/v1/chat/completions` 即可，底层可以是实验室现有 Ollama、vLLM 或其他推理服务。
+Java 主服务只把 ChatModel 切到本地 Qwen3.5-122B；当前向量化与 Rerank 仍使用 DashScope，因此知识入库和检索仍需 `DASHSCOPE_API_KEY`。联网检索使用可选的 `TAVILY_API_KEY`；未配置时工具会闭合失败并明确返回不可用，不会编造网页结果。本地模型服务只要实现 OpenAI 兼容的 `/v1/chat/completions` 即可。
 
 ### 2. 启动本地 Agent_SDR 执行面
 
@@ -199,7 +223,7 @@ Copy-Item .env.example .env
 uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-UHD Python 绑定通常需要按 USRP/UHD 官方方式单独安装。没有 UHD 或未连接设备时，Agent_SDR 只应返回离线/驱动缺失信息，不会产生真实射频测量。
+UHD Python 绑定和 `uhd_config_info`、`uhd_find_devices`、`uhd_usrp_probe` 命令通常需要按 USRP/UHD 官方方式单独安装。设备诊断工具只以参数列表、`shell=false` 执行这组白名单命令，并限制超时和输出长度；没有 UHD 或未连接设备时只返回真实错误，不产生虚假参数。
 
 Spring 侧默认使用 HTTP Bridge：
 
@@ -276,6 +300,9 @@ $env:RUN_ROUTE_EVALUATION='true'
 
 ```powershell
 .\mvnw.cmd test
+
+Set-Location .\agent-sdr-service
+python -m unittest discover -s tests -v
 
 # 完整 Spring 上下文需要 DashScope、PostgreSQL、Redis 和本地模型均可用
 $env:RUN_APPLICATION_CONTEXT_TEST='true'

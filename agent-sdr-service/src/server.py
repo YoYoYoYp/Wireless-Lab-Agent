@@ -36,6 +36,7 @@ from src.mcp import create_sdr_mcp
 from core.memory import ConversationMemory
 from core.rag import LocalKnowledgeBase
 from hardware.sdr_controller import SDRController
+from hardware.uhd_diagnostics import UhdDiagnosticRunner
 from hardware.video_stream_controller import VideoStreamController
 
 memory = ConversationMemory(max_messages=settings.session_history_limit)
@@ -44,6 +45,7 @@ knowledge_base = LocalKnowledgeBase(
     api_key=settings.bailian_api_key,
 )
 controller = SDRController(settings.usrp_ip)
+diagnostic_runner = UhdDiagnosticRunner(settings.usrp_ip)
 video_controller = VideoStreamController(
     release_cb=controller.disconnect_usrp,
     reconnect_cb=controller.reconnect_usrp,
@@ -54,12 +56,18 @@ mcp_server, tool_registry = create_sdr_mcp(
     controller=controller,
     knowledge_base=knowledge_base,
     video_controller=video_controller,
+    diagnostic_runner=diagnostic_runner,
 )
 
 # Create skill registry
 from src.skills.registry import create_skill_registry
 
-skill_registry = create_skill_registry(controller, video_controller, knowledge_base)
+skill_registry = create_skill_registry(
+    controller,
+    video_controller,
+    knowledge_base,
+    diagnostic_runner,
+)
 
 # Create agent loop
 from openai import OpenAI
