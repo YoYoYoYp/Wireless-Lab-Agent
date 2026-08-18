@@ -4,9 +4,9 @@ Flow:
     1. Match skill by regex
     2. Build context (system prompt + skill injection + history + user msg)
     3. Loop:
-        a. Call LLM with MCP tools, stream text deltas
+        a. Call LLM with registered tools, stream text deltas
         b. Collect tool calls from LLM response
-        c. Execute each tool call via MCPToolRegistry
+        c. Validate and execute each tool call via ToolRegistry
         d. Inject tool results into messages, continue
     4. Save conversation memory
     5. Yield final "done" event
@@ -23,7 +23,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 import aiohttp
 
@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 from core.memory import ConversationMemory
 from src.agent.context import build_messages
 from src.config import settings
-from src.mcp import MCPToolRegistry
 from skill.skill_spec import SkillRegistry
+from tools import ToolRegistry
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Console event reporting config
@@ -179,19 +179,21 @@ def report_to_console(
 
 
 class AgentLoop:
-    """MCP-centric agent loop — model-agnostic, streaming, skill-aware."""
+    """Model-agnostic local agent loop with shared validated tools."""
 
     def __init__(
         self,
         llm_client: Any,
-        tool_registry: MCPToolRegistry,
+        tool_registry: ToolRegistry,
         skill_registry: SkillRegistry | None,
         memory: ConversationMemory,
+        hardware_busy: Callable[[], bool] | None = None,
     ) -> None:
         self.llm = llm_client
         self.tools = tool_registry
         self.skills = skill_registry
         self.memory = memory
+        self.hardware_busy = hardware_busy or (lambda: False)
         self._pending_console_run_id: str | None = None
         self._pending_console_session_id: str = ""
         self._pending_console_instruction: str = ""
@@ -214,7 +216,7 @@ class AgentLoop:
         """If hardware became idle and a completion is pending, send it now."""
         if (
             self._pending_console_run_id is not None
-            and not self.tools.is_hardware_busy()
+            and not self.hardware_busy()
         ):
             report_to_console(
                 agent_id="usrp",
@@ -389,7 +391,7 @@ class AgentLoop:
                             "content": (
                                 "⚠️ 你刚才没有调用任何工具！当前请求是硬件执行动作，"
                                 "你必须调用工具来实际操作 USRP，禁止直接用文字假装已经执行。"
-                                f"请立即调用 {skill.name} 工具。"
+                                f"请立即调用 {skill.target_tool} 工具。"
                             ),
                         })
                         yield {
@@ -417,7 +419,7 @@ class AgentLoop:
                         tool_args = {}
 
                     # Validate tool exists
-                    if self.tools.get(tool_name) is None:
+                    if not self.tools.has_tool(tool_name):
                         err_result = json.dumps(
                             {
                                 "status": "error",
@@ -465,16 +467,11 @@ class AgentLoop:
                         tool_name=tool_name,
                     )
 
-                    # Execute via MCP
+                    # Execute locally through the shared validated registry.
                     tool_start = time.perf_counter()
-                    result_json = await self.tools.call(tool_name, tool_args)
+                    result_obj = await self.tools.execute(tool_name, tool_args)
+                    result_json = json.dumps(result_obj, ensure_ascii=False, indent=2)
                     tool_elapsed = _elapsed_ms(tool_start)
-
-                    # Parse result for logging
-                    try:
-                        result_obj = json.loads(result_json)
-                    except json.JSONDecodeError:
-                        result_obj = {"status": "unknown", "raw": result_json}
 
                     log_line = (
                         f"技能 {tool_name} 执行耗时 {tool_elapsed:.0f} ms，"
@@ -545,7 +542,7 @@ class AgentLoop:
             # BUT: if the USRP is still running a background task
             # (e.g. tone_loopback_visualize), defer completion until
             # stop_hardware_task is called and hardware becomes idle.
-            if self.tools.is_hardware_busy():
+            if self.hardware_busy():
                 # Hardware still busy — save completion for later flush
                 self._pending_console_run_id = run_id
                 self._pending_console_session_id = session_id

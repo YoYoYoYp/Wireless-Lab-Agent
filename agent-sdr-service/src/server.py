@@ -38,6 +38,7 @@ from core.rag import LocalKnowledgeBase
 from hardware.sdr_controller import SDRController
 from hardware.uhd_diagnostics import UhdDiagnosticRunner
 from hardware.video_stream_controller import VideoStreamController
+from tools.registry import create_tool_registry
 
 memory = ConversationMemory(max_messages=settings.session_history_limit)
 knowledge_base = LocalKnowledgeBase(
@@ -51,23 +52,23 @@ video_controller = VideoStreamController(
     reconnect_cb=controller.reconnect_usrp,
 )
 
-# Create MCP server + tool registry
-mcp_server, tool_registry = create_sdr_mcp(
+# Build the single validated registry used by both local Agent Loop and MCP.
+tool_registry = create_tool_registry(
     controller=controller,
     knowledge_base=knowledge_base,
     video_controller=video_controller,
     diagnostic_runner=diagnostic_runner,
 )
+mcp_server = create_sdr_mcp(
+    tool_registry=tool_registry,
+    controller=controller,
+    knowledge_base=knowledge_base,
+)
 
 # Create skill registry
 from src.skills.registry import create_skill_registry
 
-skill_registry = create_skill_registry(
-    controller,
-    video_controller,
-    knowledge_base,
-    diagnostic_runner,
-)
+skill_registry = create_skill_registry(tool_registry)
 
 # Create agent loop
 from openai import OpenAI
@@ -84,6 +85,7 @@ agent_loop = AgentLoop(
     tool_registry=tool_registry,
     skill_registry=skill_registry,
     memory=memory,
+    hardware_busy=controller.has_background_task,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════

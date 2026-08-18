@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -16,7 +17,7 @@ class ToolSpec:
     name: str
     description: str
     schema_model: type[BaseModel]
-    handler: Callable[[BaseModel], dict[str, Any]]
+    handler: Callable[[BaseModel], Any]
     category: str = "general"
 
     def as_openai_tool(self) -> dict[str, Any]:
@@ -36,6 +37,11 @@ class ToolRegistry:
     def __init__(self, tool_specs: list[ToolSpec]) -> None:
         self._tool_specs = list(tool_specs)
         self._tool_map = {tool.name: tool for tool in tool_specs}
+        if len(self._tool_map) != len(self._tool_specs):
+            raise ValueError("工具名称不能重复")
+
+    def all(self) -> list[ToolSpec]:
+        return list(self._tool_specs)
 
     def as_openai_tools(
         self,
@@ -58,21 +64,35 @@ class ToolRegistry:
     def get_tool(self, name: str) -> ToolSpec | None:
         return self._tool_map.get(name)
 
-    def execute(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def execute(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate tool input once, then invoke the shared local handler."""
         tool = self._tool_map.get(name)
         if tool is None:
             return {"status": "error", "error": f"未知技能: {name}"}
         try:
             validated = tool.schema_model.model_validate(payload)
         except ValidationError as exc:
+            details = [
+                {
+                    "type": item.get("type"),
+                    "loc": list(item.get("loc", ())),
+                    "msg": item.get("msg"),
+                }
+                for item in exc.errors()
+            ]
             return {
                 "status": "error",
                 "error": f"技能 {name} 参数校验失败。",
-                "details": exc.errors(),
+                "details": details,
             }
 
         try:
-            return tool.handler(validated)
+            result = tool.handler(validated)
+            if inspect.isawaitable(result):
+                result = await result
+            if isinstance(result, dict):
+                return result
+            return {"status": "success", "result": result}
         except Exception as exc:  # pragma: no cover - guardrail for tool handlers
             return {
                 "status": "error",

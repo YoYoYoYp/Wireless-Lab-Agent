@@ -5,31 +5,33 @@ In the new architecture, skills are used for:
     1. Regex-based intent matching (before LLM call)
     2. Prompt injection (system prompt enrichment)
 
-The actual tool execution goes through the MCP server, not through skill handlers.
+The actual tool execution goes through the shared ToolRegistry, not through
+skill handlers or the MCP transport.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from skill.skills import build_all_skills
 from skill.skill_spec import SkillRegistry
+from tools import ToolRegistry
 
 
-def create_skill_registry(
-    controller: Any = None,
-    video_controller: Any = None,
-    knowledge_base: Any = None,
-    diagnostic_runner: Any = None,
-) -> SkillRegistry:
+def create_skill_registry(tool_registry: ToolRegistry) -> SkillRegistry:
     """Build the skill registry from .md files.
 
     In the Claude Code architecture, skills only provide:
     - Regex matching (trigger_patterns, trigger_keywords)
     - System prompt injection (the .md body)
 
-    Tool execution goes through the MCP server.
-    The handler lambdas are kept for backward compatibility but are
-    not used in the new agent loop.
+    Tool execution goes through the shared ToolRegistry.  Fail fast when a
+    skill points at a tool that was not registered for this deployment.
     """
-    return build_all_skills(controller, video_controller, knowledge_base, diagnostic_runner)
+    registry = build_all_skills()
+    missing = sorted({
+        skill.target_tool
+        for skill in registry.all()
+        if not tool_registry.has_tool(skill.target_tool)
+    })
+    if missing:
+        raise ValueError(f"Skill 引用了未注册工具: {', '.join(missing)}")
+    return registry
