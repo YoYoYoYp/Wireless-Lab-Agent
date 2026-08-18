@@ -64,6 +64,9 @@ sdr:
   agent-base-url: ${AGENT_SDR_BASE_URL:http://127.0.0.1:8000}
   agent-mode: ${SDR_AGENT_MODE:think}
 
+tavily:
+  api-key: ${TAVILY_API_KEY:}
+
 knowledge:
   bootstrap:
     enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:true}

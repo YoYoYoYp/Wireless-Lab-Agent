@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>无线实验室智能体</title>
-    <link rel="stylesheet" href="css/style.css?v=3">
+    <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body class="chat-page">
     <div class="app-container">
@@ -26,10 +26,13 @@
         <main class="chat-main">
             <header class="chat-header">
                 <div>
-                    <p class="chat-header-label">SDR Control Hub</p>
-                    <h1>无线通信实验室设备控制与知识 Agent</h1>
+                    <p class="chat-header-label">Java Control Plane</p>
+                    <h1>Wireless Lab Agent</h1>
+                    <p class="chat-header-subtitle">知识检索、任务编排与 USRP 实验控制统一入口</p>
                 </div>
-                <div class="chat-header-tip">RAG · Tool Calling · MCP · USRP</div>
+                <div class="chat-header-tip">
+                    <span>RAG</span><span>Tool Calling</span><span>MCP</span><span>USRP</span>
+                </div>
             </header>
 
             <div class="chat-messages" id="chatMessages">
@@ -37,6 +40,9 @@
                     <div class="welcome-badge">Ready</div>
                     <h2>实验控制台已就绪</h2>
                     <p>可以查询 SDR/USRP 文档，也可以用自然语言发起扫频、调制收发和设备诊断。</p>
+                    <div class="agent-flow" aria-label="双智能体执行链路">
+                        <span>意图路由</span><i>→</i><span>RAG / 工具</span><i>→</i><span>Agent_SDR</span><i>→</i><span>USRP</span>
+                    </div>
                     <div class="quick-actions">
                         <button class="quick-btn" data-msg="扫描 2.4 GHz 附近 1 MHz 带宽的底噪">2.4G 扫频</button>
                         <button class="quick-btn" data-msg="BPSK、QPSK 和 16-QAM 应该如何选择？">调制方式</button>
@@ -81,13 +87,23 @@
                 <span>运行诊断</span>
                 <p id="diagnosticText">正在读取 Agent_SDR 状态...</p>
             </div>
+            <div class="open-source-card">
+                <span>OPEN SOURCE HARDWARE AGENT</span>
+                <strong>Agent_SDR</strong>
+                <p>Python/UHD 硬件执行面与上游演示。</p>
+                <div class="resource-links">
+                    <a href="https://github.com/GIN4869623/Agent_SDR" target="_blank" rel="noopener noreferrer">上游仓库</a>
+                    <a href="media/agent-sdr-demo-01.mp4" target="_blank">演示 01</a>
+                    <a href="media/agent-sdr-demo-02.mp4" target="_blank">演示 02</a>
+                </div>
+            </div>
             <button id="stopHardwareBtn" class="hardware-stop-btn">停止硬件任务</button>
             <p class="telemetry-footnote">状态每 3 秒刷新；执行结果以 Agent_SDR/UHD 返回为准。</p>
         </aside>
     </div>
 
-    <script src="js/api.js?v=3"></script>
-    <script src="js/sidebar.js?v=3"></script>
-    <script src="js/chat.js?v=3"></script>
+    <script src="js/api.js?v=4"></script>
+    <script src="js/sidebar.js?v=4"></script>
+    <script src="js/chat.js?v=4"></script>
 </body>
 </html>

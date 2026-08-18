@@ -38,6 +38,19 @@ class QueryRoutingServiceTest {
     }
 
     @Test
+    void shouldRouteUhdParameterQueryWithoutCallingClassifier() {
+        ChatModel model = mock(ChatModel.class);
+        QueryRoutingService service = new QueryRoutingService(model);
+        clearInvocations(model);
+
+        var decision = service.route("查询UHD版本和USRP设备参数");
+
+        assertEquals(RouteLabel.DEVICE, decision.label());
+        assertEquals(RagStrategy.NONE, decision.strategy());
+        verifyNoInteractions(model);
+    }
+
+    @Test
     void shouldNotTreatKnowledgeQuestionContainingModulationAsHardwareCommand() {
         var decision = serviceReturning("STATIC").route("BPSK 为什么适合低信噪比链路？");
 

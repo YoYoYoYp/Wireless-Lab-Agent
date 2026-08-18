@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 
 from core.rag import LocalKnowledgeBase
 from hardware.sdr_controller import SDRController
+from hardware.uhd_diagnostics import UhdDiagnosticRunner
 from hardware.video_stream_controller import VideoStreamController
 
 
@@ -106,6 +107,7 @@ def create_sdr_mcp(
     controller: SDRController,
     knowledge_base: LocalKnowledgeBase,
     video_controller: VideoStreamController | None = None,
+    diagnostic_runner: UhdDiagnosticRunner | None = None,
 ) -> tuple[FastMCP, MCPToolRegistry]:
     """Build the FastMCP server + programmatic registry.
 
@@ -121,7 +123,8 @@ def create_sdr_mcp(
             "Agent SDR Platform — manage USRP X300 software-defined radio hardware. "
             "Use tools to scan spectrum, transmit/receive text with FSK/BPSK/QPSK/16-QAM, "
             "generate and visualize tones, stream video via GNU Radio, and query the "
-            "SDR knowledge base.  Default center frequency: 2.4 GHz.  "
+            "SDR knowledge base or inspect USRP/UHD runtime parameters with allow-listed diagnostics.  "
+            "Default center frequency: 2.4 GHz.  "
             "Default tone frequency: 100 kHz."
         ),
     )
@@ -478,6 +481,48 @@ def create_sdr_mcp(
             ensure_ascii=False,
             indent=2,
         )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Restricted UHD Diagnostics Tool (optional)
+    # ─────────────────────────────────────────────────────────────────────
+
+    if diagnostic_runner is not None:
+
+        @_register(
+            name="query_usrp_device_parameters",
+            description=(
+                "通过服务端固定白名单的UHD诊断命令查询USRP型号、序列号、主板、射频子板、"
+                "UHD版本或网络连通性；不接受任意终端命令。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "summary",
+                            "find_devices",
+                            "probe_device",
+                            "get_uhd_version",
+                            "ping_device",
+                        ],
+                        "description": "受限诊断动作，默认summary。",
+                        "default": "summary",
+                    },
+                    "device_ip": {
+                        "type": "string",
+                        "description": "USRP管理地址；不填时使用服务端USRP_IP。",
+                    },
+                },
+                "required": [],
+            },
+        )
+        async def query_usrp_device_parameters(
+            action: str = "summary",
+            device_ip: str | None = None,
+        ) -> str:
+            result = diagnostic_runner.query(action=action, device_ip=device_ip)
+            return json.dumps(result, ensure_ascii=False, indent=2)
 
     # ─────────────────────────────────────────────────────────────────────
     # Video Tools (optional)

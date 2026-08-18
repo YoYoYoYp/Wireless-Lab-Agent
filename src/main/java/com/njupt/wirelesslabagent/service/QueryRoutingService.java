@@ -21,7 +21,8 @@ public class QueryRoutingService {
     );
     private static final List<String> HARDWARE_TERMS = List.of(
             "usrp", "扫频", "频谱扫描", "底噪", "tone", "单音", "bpsk", "qpsk",
-            "qam", "fsk", "自适应调制", "认知选频", "ris", "频点"
+            "qam", "fsk", "自适应调制", "认知选频", "ris", "频点", "uhd",
+            "设备参数", "驱动版本"
     );
     private static final Pattern COMMAND_INTENT = Pattern.compile(
             "(^|[，,。；;\\s])(请|请用|帮我|现在|立即|开始|执行|运行|停止|发送|发射|扫描|扫频|测量|配置|查询|查看|获取)"
