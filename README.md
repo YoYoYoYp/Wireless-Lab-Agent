@@ -25,6 +25,16 @@
 
 两段视频复制自 Agent_SDR 上游仓库的[原视频 01](https://github.com/GIN4869623/Agent_SDR/blob/main/15a9f62542c0ccde0243d3774e631b2b.mp4)和[原视频 02](https://github.com/GIN4869623/Agent_SDR/blob/main/dbb3bbbb0396fc32b3b7eebeafd0ed33.mp4)。上游仓库当前未声明许可证，视频仅保留来源展示，不表示本项目拥有其版权。
 
+### 实验室现场
+
+以下照片用于展示项目所在实验室的真实运行环境、信号监测终端和 USRP 设备。部分画面属于实验室上层协同管控环境，并非全部由本仓库前端直接生成；本仓库对应其中的无线知识检索、Agent_SDR 编排和 USRP 工具执行链路。
+
+| 实验室协同管控界面 | 本地计算与信号监测终端 |
+|---|---|
+| ![实验室协同管控界面](docs/images/lab/lab-orchestration-platform.jpg) | ![本地计算与信号监测终端](docs/images/lab/signal-monitoring-workstation.jpg) |
+| **软件无线电多智能体协同控制台** | **NI USRP-2943R 实验设备** |
+| ![软件无线电多智能体协同控制台](docs/images/lab/multi-agent-sdr-console.jpg) | ![NI USRP-2943R 实验设备](docs/images/lab/usrp-2943r-testbed.jpg) |
+
 ## 原项目能力复用
 
 | 组件 | 复用情况 | 当前作用 |
@@ -95,6 +105,11 @@ RAG 降级链路  → MULTI → SINGLE → NONE；Rerank 失败保留粗排结�
 wireless-lab-agent/
 ├── .env.example                                  # 环境变量清单（不含密钥）
 ├── pom.xml                                       # Maven 依赖
+├── docs/images/lab/                              # 去除拍摄元数据的实验室现场照片
+│   ├── lab-orchestration-platform.jpg            # 实验室上层协同管控界面
+│   ├── signal-monitoring-workstation.jpg         # 本地计算与信号监测终端
+│   ├── multi-agent-sdr-console.jpg                # 软件无线电多智能体控制台
+│   └── usrp-2943r-testbed.jpg                     # NI USRP-2943R 实验设备
 ├── src/main/java/com/njupt/wirelesslabagent/    # 无线实验室智能体 Java 基础包
 │   ├── WirelessLabAgentApplication.java          # 启动类
 │   ├── advisor/                                  # RAG/权限/日志 Advisor
