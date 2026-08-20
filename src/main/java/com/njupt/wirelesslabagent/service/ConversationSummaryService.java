@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -30,15 +29,18 @@ public class ConversationSummaryService {
     private static final Duration LOCK_TTL = Duration.ofMinutes(5);
 
     private final StringRedisTemplate redisTemplate;
+    private final RedisLockService redisLockService;
     private final ChatMemoryProperties properties;
     private final ChatClient summaryClient;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("chat-summary-", 0).factory());
 
     public ConversationSummaryService(StringRedisTemplate redisTemplate,
+                                      RedisLockService redisLockService,
                                       ChatMemoryProperties properties,
                                       ChatModel chatModel) {
         this.redisTemplate = redisTemplate;
+        this.redisLockService = redisLockService;
         this.properties = properties;
         this.summaryClient = ChatClient.builder(chatModel)
                 .defaultSystem("""
@@ -109,9 +111,8 @@ public class ConversationSummaryService {
 
     private void summarizePending(String conversationId) {
         String lockKey = lockKey(conversationId);
-        String lockToken = UUID.randomUUID().toString();
-        Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockToken, LOCK_TTL);
-        if (!Boolean.TRUE.equals(locked)) {
+        String lockToken = redisLockService.tryAcquire(lockKey, LOCK_TTL);
+        if (lockToken == null) {
             return;
         }
 
@@ -122,9 +123,7 @@ public class ConversationSummaryService {
         } catch (Exception exception) {
             log.warn("滚动摘要生成失败，旧消息继续保留在待摘要区: {}", exception.getMessage());
         } finally {
-            if (lockToken.equals(redisTemplate.opsForValue().get(lockKey))) {
-                redisTemplate.delete(lockKey);
-            }
+            redisLockService.release(lockKey, lockToken);
         }
     }
 

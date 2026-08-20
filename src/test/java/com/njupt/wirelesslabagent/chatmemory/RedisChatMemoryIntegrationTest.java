@@ -3,6 +3,7 @@ package com.njupt.wirelesslabagent.chatmemory;
 import com.njupt.wirelesslabagent.config.ChatMemoryProperties;
 import com.njupt.wirelesslabagent.service.ConversationHistoryService;
 import com.njupt.wirelesslabagent.service.ConversationSummaryService;
+import com.njupt.wirelesslabagent.service.RedisLockService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -66,7 +67,8 @@ class RedisChatMemoryIntegrationTest {
         ChatModel summaryModel = mock(ChatModel.class);
         when(summaryModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(
                 new Generation(new AssistantMessage("已生成的滚动摘要")))));
-        summaryService = new ConversationSummaryService(redis, properties, summaryModel);
+        summaryService = new ConversationSummaryService(
+                redis, new RedisLockService(redis), properties, summaryModel);
         repository = new RedisChatMemoryRepository(redis, properties, summaryService);
         historyService = new ConversationHistoryService(redis, keyFactory, properties);
         chatMemory = MessageWindowChatMemory.builder()

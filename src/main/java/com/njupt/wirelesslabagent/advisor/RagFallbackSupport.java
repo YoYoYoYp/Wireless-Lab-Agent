@@ -11,7 +11,8 @@ import java.util.function.Supplier;
 
 /** RAG 各阶段的降级策略，确保预处理、检索或精排失败时仍可继续回答。 */
 @Slf4j
-public final class RagFallbackSupport {
+public final class
+RagFallbackSupport {
 
     private RagFallbackSupport() {
     }

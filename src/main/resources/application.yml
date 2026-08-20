@@ -63,6 +63,16 @@ knife4j:
 sdr:
   agent-base-url: ${AGENT_SDR_BASE_URL:http://127.0.0.1:8000}
   agent-mode: ${SDR_AGENT_MODE:think}
+  resilience:
+    enabled: ${SDR_RESILIENCE_ENABLED:true}
+    read-timeout: ${SDR_MCP_READ_TIMEOUT:8s}
+    action-timeout: ${SDR_MCP_ACTION_TIMEOUT:60s}
+    safe-max-attempts: ${SDR_SAFE_MAX_ATTEMPTS:2}
+    retry-backoff: ${SDR_RETRY_BACKOFF:200ms}
+    failure-threshold: ${SDR_CIRCUIT_FAILURE_THRESHOLD:3}
+    open-duration: ${SDR_CIRCUIT_OPEN_DURATION:30s}
+    http-connect-timeout: ${SDR_HTTP_CONNECT_TIMEOUT:3s}
+    http-read-timeout: ${SDR_HTTP_READ_TIMEOUT:75s}
 
 tavily:
   api-key: ${TAVILY_API_KEY:}

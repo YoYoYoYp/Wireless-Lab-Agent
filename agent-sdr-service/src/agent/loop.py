@@ -537,6 +537,12 @@ class AgentLoop:
             # ── Done ──
             total_ms = _elapsed_ms(request_start)
             tools_executed = len([tc for tc in tool_call_history if tc.get("status") == "success"])
+            tools_failed = len(tool_call_history) - tools_executed
+            overall_status = (
+                "success"
+                if tools_failed == 0
+                else ("partial" if tools_executed > 0 else "error")
+            )
 
             # Notify console: task completed → main node disappears.
             # BUT: if the USRP is still running a background task
@@ -564,7 +570,7 @@ class AgentLoop:
 
             yield {
                 "type": "done",
-                "status": "success",
+                "status": overall_status,
                 "reply": final_reply,
                 "hardware_logs": tool_logs,
                 "updated_history": clean_history,
@@ -572,6 +578,7 @@ class AgentLoop:
                 "active_model": active_model,
                 "active_temperature": active_temp,
                 "tools_executed": tools_executed,
+                "tools_failed": tools_failed,
                 "tools_total": len(tool_call_history),
                 "timing": {
                     "total_ms": total_ms,

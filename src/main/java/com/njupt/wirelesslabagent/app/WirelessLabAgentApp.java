@@ -4,6 +4,7 @@ import com.njupt.wirelesslabagent.common.RagStrategy;
 import com.njupt.wirelesslabagent.config.ChatClientFactory;
 import com.njupt.wirelesslabagent.chatmemory.ConversationKeyFactory;
 import com.njupt.wirelesslabagent.service.QueryRoutingService;
+import com.njupt.wirelesslabagent.service.SdrToolExecutionGateway;
 import com.njupt.wirelesslabagent.tools.SdrHardwareTool;
 import com.njupt.wirelesslabagent.tools.WebSearchTool;
 import jakarta.annotation.PostConstruct;
@@ -15,7 +16,6 @@ import org.springframework.ai.chat.prompt.SystemPromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
@@ -43,7 +43,7 @@ public class WirelessLabAgentApp {
                                QueryRoutingService queryRoutingService,
                                SdrHardwareTool sdrHardwareTool,
                                WebSearchTool webSearchTool,
-                               ObjectProvider<ToolCallbackProvider> toolCallbackProvider,
+                               SdrToolExecutionGateway sdrToolExecutionGateway,
                                @Value("classpath:/prompts/wireless-lab-system-prompt.st") Resource systemResource) {
         this.systemPrompt = loadSystemPrompt(systemResource);
         this.clients = factory.buildAll(systemPrompt);
@@ -51,7 +51,7 @@ public class WirelessLabAgentApp {
         this.queryRoutingService = queryRoutingService;
         this.sdrHardwareTool = sdrHardwareTool;
         this.webSearchTool = webSearchTool;
-        this.mcpTools = toolCallbackProvider.getIfAvailable();
+        this.mcpTools = sdrToolExecutionGateway.mcpTools();
     }
 
     @PostConstruct
@@ -84,7 +84,7 @@ public class WirelessLabAgentApp {
         if (mcpTools == null) {
             return prompt.tools(sdrHardwareTool, webSearchTool).stream().content();
         }
-        return prompt.tools(sdrHardwareTool, webSearchTool)
+        return prompt.tools(webSearchTool)
                 .toolCallbacks(mcpTools)
                 .stream()
                 .content();

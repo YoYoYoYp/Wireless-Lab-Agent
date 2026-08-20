@@ -12,10 +12,10 @@
 - Agent_SDR 双通道：默认通过 HTTP Agent Bridge 调用 FastAPI；启用 MCP 后直接加载 Agent_SDR 的 USRP 工具。
 - USRP 能力：扫频测底噪、Tone 可视化、2-FSK/BPSK/QPSK/16-QAM 文本收发、自适应调制、认知选频和任务停止。
 - 异步知识入库：上传文档后立即返回任务 ID，Redis List 消费者异步完成 Tika 解析、切片、关键词增强和 PGVector 写入。
-- 分层会话记忆：Redis 保留最近 20 条精确消息，更早消息异步合并为滚动摘要；所有会话键按用户隔离并采用 7 天滑动 TTL。
+- 分层会话记忆：Redis 保留最近 20 条精确消息，更早消息异步合并为滚动摘要；摘要任务用 `SET NX` 抢锁并通过 Lua 原子比较 token 后释放，所有会话键按用户隔离并采用 7 天滑动 TTL。
 - 设备态势面板：浏览器每 3 秒轮询 Agent_SDR，展示连接状态、中心频率、采样率、增益、调制方式和诊断信息。
 - RAG 评估：49 条标注到具体知识来源的 SDR 问题，计算 Hit Rate、Recall、Precision、MAP、NDCG、MRR；生成评测使用实际检索上下文并设置质量门槛。
-- 故障降级：路由器异常回退单查询；查询变换失败回退原始查询；多查询、Rerank、PGVector 分别降级为单查询、粗排和无 RAG 回答。
+- 故障降级：路由器异常回退单查询；查询变换失败回退原始查询；多查询、Rerank、PGVector 分别降级为单查询、粗排和无 RAG 回答。MCP 工具经过统一调用网关执行分级超时、安全重试和熔断；查询/停止类失败可降级 HTTP Bridge，发射等有副作用操作调用后失败不盲目重试。
 
 ## 演示与来源
 
@@ -31,7 +31,7 @@
 |---|---|---|
 | Advisors | 保留并接入 | Permission、Memory、日志、RE2，以及单查询、重写、翻译、历史压缩、多查询扩展和 Rerank 链路 |
 | Java Tools | 场景化改造 | `SdrHardwareTool` 负责硬件桥接，`WebSearchTool` 在本地检索证据不足或需要最新资料时调用 Tavily 并保留来源 URL |
-| Spring AI MCP Client | 保留并接入 | `SDR_MCP_ENABLED=true` 时自动加载 Agent_SDR MCP 工具，关闭时回退 HTTP Bridge |
+| Spring AI MCP Client | 保留并接入 | `SDR_MCP_ENABLED=true` 时自动加载 Agent_SDR MCP 工具，并由统一网关包装超时、重试、熔断和 HTTP Bridge 降级 |
 | Agent_SDR Tools/Skills | 保留并接入 | Skill 只负责规则匹配与操作说明，统一 ToolRegistry 负责 Pydantic 校验和执行；FastMCP 将同一组工具对外暴露，不开放任意终端 |
 
 ## 架构
@@ -45,8 +45,9 @@ flowchart LR
     Advisors --> PG[("PostgreSQL + pgvector")]
     Router -->|"最新资料 / 本地证据不足"| Web["Tavily 联网检索 / 来源 URL"]
     Router -->|"设备动作"| Tools["Tool Calling"]
-    Tools -->|"HTTP Bridge"| SDR["本地 agent-sdr-service / FastAPI"]
-    Tools -.->|"可选 MCP / SSE"| SDR
+    Tools --> Gateway["SdrToolExecutionGateway / 分级容错"]
+    Gateway -->|"MCP / SSE 主通道"| SDR["本地 agent-sdr-service / FastAPI"]
+    Gateway -.->|"熔断前置或安全操作失败 / HTTP Bridge"| SDR
     SDR --> Registry["统一 ToolRegistry / Pydantic 校验"]
     Registry --> Diagnostics["UHD 诊断命令白名单"]
     Registry --> UHD["UHD / USRP"]
@@ -71,7 +72,9 @@ flowchart LR
 设备参数诊断  → query_usrp_device_parameters → uhd_config_info / uhd_find_devices / uhd_usrp_probe
 RIS 外部设备  → 已注册的 MCP 工具，不在本地伪造执行结果
 
-降级链路      → MULTI → SINGLE → NONE；Rerank 失败保留粗排结果
+RAG 降级链路  → MULTI → SINGLE → NONE；Rerank 失败保留粗排结果
+硬件容错链路  → MCP 分级超时 → 查询/停止类有限重试 → 熔断 → HTTP Bridge → 明确不可用
+安全边界      → 参数错误/设备忙/USRP 离线不计入熔断；有副作用工具调用后失败不自动重试或跨通道执行
 ```
 
 ## 技术栈
@@ -112,6 +115,7 @@ wireless-lab-agent/
 │   ├── config/
 │   │   ├── ChatClientFactory.java                # 六类 ChatClient/Advisor 链
 │   │   ├── ChatMemoryProperties.java             # 窗口、摘要批次和 TTL 配置
+│   │   ├── SdrResilienceProperties.java           # MCP/HTTP 超时、重试和熔断参数
 │   │   ├── KnowledgeBaseInitializerConfig.java   # 内置 SDR 文档 ETL
 │   │   ├── PgVectorConfig.java                   # PGVector/HNSW
 │   │   └── DashScopeRerankConfig.java            # 精排模型
@@ -123,9 +127,13 @@ wireless-lab-agent/
 │   │   └── KnowledgeController.java              # 文档上传与任务查询
 │   ├── exception/                                # 统一业务异常处理
 │   ├── service/
-│   │   ├── AgentSdrClient.java                   # Agent_SDR HTTP Bridge
+│   │   ├── AgentSdrClient.java                   # Agent_SDR HTTP Bridge 与结构化传输错误
 │   │   ├── ConversationHistoryService.java       # 用户会话索引与标题
 │   │   ├── ConversationSummaryService.java       # 待摘要原文与滚动摘要
+│   │   ├── RedisLockService.java                  # SET NX + Lua 原子释放摘要锁
+│   │   ├── SdrToolExecutionGateway.java           # MCP 超时、重试、熔断与 HTTP 降级网关
+│   │   ├── SdrCircuitBreaker.java                 # CLOSED/OPEN/HALF_OPEN 状态机
+│   │   ├── SdrOperationKind.java                  # 查询、幂等控制和副作用工具分类
 │   │   ├── QueryRoutingService.java               # 规则、模型分类和异常回退
 │   │   ├── KnowledgeDocumentService.java         # Redis 异步知识入库
 │   │   ├── KnowledgeMetadataResolver.java        # 五类知识与元数据统一解析
@@ -176,7 +184,11 @@ wireless-lab-agent/
 │   ├── service/
 │   │   ├── KnowledgeMetadataResolverTest.java    # 分类与元数据单元测试
 │   │   ├── QueryRoutingServiceTest.java           # 标签映射与异常回退
-│   │   └── QueryRoutingEvaluationTest.java        # Accuracy/Macro-F1/混淆矩阵
+│   │   ├── QueryRoutingEvaluationTest.java        # Accuracy/Macro-F1/混淆矩阵
+│   │   ├── RedisLockServiceTest.java              # Redis 锁获取与 Lua 原子释放
+│   │   ├── SdrCircuitBreakerTest.java             # 熔断状态转换与安全半开探测
+│   │   ├── SdrOperationKindTest.java              # 工具副作用与安全重试分类
+│   │   └── SdrToolExecutionGatewayTest.java       # 重试、副作用保护和 HTTP 降级
 │   ├── tools/
 │   │   └── WebSearchToolTest.java                # 缺少密钥闭合失败与来源保留测试
 │   ├── advisor/
@@ -247,6 +259,16 @@ $env:SDR_MCP_ENABLED='true'
 ```
 
 MCP SSE 完整入口为 `/mcp/sse`。
+
+启用 MCP 后，控制面不再同时把粗粒度 HTTP 硬件工具交给模型自由选择，而是统一通过 `SdrToolExecutionGateway` 包装远程 ToolCallback：查询、诊断、扫频和停止类操作最多尝试 2 次；连续传输故障达到 3 次后熔断 30 秒，熔断期间直接走 HTTP Bridge；半开状态只使用无副作用工具探测恢复。参数错误、设备忙、UHD/USRP 离线属于共同下游的业务失败，不触发重试和熔断。发射、Tone、视频启动等有副作用操作如果 MCP 已经发起后超时，返回 `executionState=UNKNOWN` 并要求先查询状态，不自动跨通道重复执行。
+
+```powershell
+$env:SDR_MCP_READ_TIMEOUT='8s'
+$env:SDR_MCP_ACTION_TIMEOUT='60s'
+$env:SDR_SAFE_MAX_ATTEMPTS='2'
+$env:SDR_CIRCUIT_FAILURE_THRESHOLD='3'
+$env:SDR_CIRCUIT_OPEN_DURATION='30s'
+```
 
 ### 会话记忆配置
 
