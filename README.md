@@ -30,7 +30,7 @@
 
 以下照片用于展示项目所在实验室的真实运行环境、信号监测终端和 USRP 设备。部分画面属于实验室上层协同管控环境，并非全部由本仓库前端直接生成；本仓库对应其中的无线知识检索、Agent_SDR 编排和 USRP 工具执行链路。
 
-| 实验室协同管控界面 | 本地LLM终端 |
+| 实验室协同管控界面 | 本地LLM监测终端 |
 |---|---|
 | ![实验室协同管控界面](docs/images/lab/lab-orchestration-platform.jpg) | ![本地计算与信号监测终端](docs/images/lab/signal-monitoring-workstation.jpg) |
 | **软件无线电多智能体协同控制台** | **NI USRP-2943R 实验设备** |
