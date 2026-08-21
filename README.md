@@ -48,32 +48,44 @@
 ## 架构
 
 ```mermaid
-flowchart LR
-    UI["浏览器控制台"] -->|"SSE / REST"| Spring["Spring Boot 控制面"]
-    Spring --> Router["查询分类与策略路由"]
-    Router --> Qwen["本地 Qwen3.5-122B / OpenAI 兼容接口"]
-    Router -->|"静态知识"| Advisors["RAG Advisor Chain"]
-    Advisors --> PG[("PostgreSQL + pgvector")]
-    Router -->|"最新资料 / 本地证据不足"| Web["Tavily 联网检索 / 来源 URL"]
-    Router -->|"设备动作"| Tools["Tool Calling"]
-    Tools --> Gateway["SdrToolExecutionGateway / 分级容错"]
-    Gateway -->|"MCP / SSE 主通道"| SDR["本地 agent-sdr-service / FastAPI"]
-    Gateway -.->|"同一 operationId / HTTP 直连工具降级"| SDR
-    SDR --> Registry["统一 ToolRegistry / Pydantic 校验"]
-    Registry --> Operation["operationId 状态机 / Lua 原子认领"]
-    Operation --> OperationRedis[("Redis RUNNING / SUCCESS / FAILED / UNKNOWN")]
-    Registry --> Diagnostics["UHD 诊断命令白名单"]
-    Registry --> UHD["UHD / USRP"]
-    Diagnostics --> UHD["UHD / USRP"]
-    SDR --> Qwen
-    Spring --> Memory["20 条活跃窗口 + 滚动摘要"]
-    Memory --> Redis[("Redis 用户隔离会话 / 7 天滑动 TTL")]
-    Upload["设备手册 / 实验文档"] --> Spring
-    Bundle["五类内置知识 / 版本化增量同步"] --> ETL
-    Redis --> ETL["Tika → Split → Metadata → Keywords → Embed"]
-    ETL --> PG
-    SDR -->|"状态与诊断"| UI
+flowchart TB
+    User["用户 / 浏览器控制台"]
+
+    subgraph Control["Java 控制智能体 · Spring Boot / Spring AI"]
+        direction TB
+        API["统一对话入口 ChatController"]
+        API --> Router["规则优先 + LLM 七分类路由"]
+        Router -->|"知识问题"| RAG["RAG Advisor Chain<br/>改写 · 多路召回 · 去重 · Rerank"]
+        Router -->|"最新资料 / 本地证据不足"| Web["联网检索工具<br/>返回来源 URL"]
+        Router -->|"设备状态 / 执行 / 停止"| ToolCall["ReAct / Tool Calling"]
+        RAG --> ControlLLM["本地 Qwen3.5-122B"]
+        Web --> ControlLLM
+        ToolCall --> Gateway["统一硬件调用网关<br/>超时 · 有限重试 · 熔断 · 降级"]
+    end
+
+    User <-->|"REST 请求 · SSE 流式响应"| API
+    RAG <--> Vector[("PostgreSQL + pgvector<br/>领域知识库")]
+    Router <--> Memory[("Redis<br/>活跃窗口 · 滚动摘要 · 7 天 TTL")]
+
+    subgraph Hardware["Python 硬件智能体 · Agent_SDR / FastAPI / UHD"]
+        direction TB
+        Mcp["FastMCP Adapter"]
+        Http["FastAPI /api/chat"]
+        Http --> AgentLoop["Agent Loop<br/>Skill 匹配 · 限定工具 · ReAct 循环"]
+        AgentLoop --> Registry["统一 ToolRegistry"]
+        Mcp --> Registry
+        Registry --> Guard["Pydantic 参数校验<br/>allowedTools 强制校验"]
+        Guard --> Idempotency["operationId 幂等状态机<br/>跨 MCP / HTTP 原子认领"]
+        Idempotency --> Handler["Handler / SDRController"]
+        Handler --> Device["UHD 驱动 / NI USRP-2943R"]
+    end
+
+    Gateway -->|"MCP：细粒度工具直连"| Mcp
+    Gateway -.->|"失败时复用同一 operationId<br/>降级到 HTTP Bridge"| Http
+    Idempotency <--> OpState[("Redis<br/>RUNNING · SUCCESS · FAILED · UNKNOWN")]
 ```
+
+在线链路中，控制智能体负责交互、检索和任务编排；硬件智能体负责 Skill 约束、参数校验和 USRP 执行。MCP 直连不会触发第二次模型推理，HTTP Bridge 模式才进入 Python Agent Loop；两条通道复用同一 `operationId`，避免降级时重复执行硬件任务。
 
 路由规则：
 
