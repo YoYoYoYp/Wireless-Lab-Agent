@@ -47,43 +47,7 @@
 
 ## 架构
 
-```mermaid
-flowchart TB
-    User["用户 / 浏览器控制台"]
-
-    subgraph Control["Java 控制智能体 · Spring Boot / Spring AI"]
-        direction TB
-        API["统一对话入口 ChatController"]
-        API --> Router["规则优先 + LLM 七分类路由"]
-        Router -->|"知识问题"| RAG["RAG Advisor Chain<br/>改写 · 多路召回 · 去重 · Rerank"]
-        Router -->|"最新资料 / 本地证据不足"| Web["联网检索工具<br/>返回来源 URL"]
-        Router -->|"设备状态 / 执行 / 停止"| ToolCall["ReAct / Tool Calling"]
-        RAG --> ControlLLM["本地 Qwen3.5-122B"]
-        Web --> ControlLLM
-        ToolCall --> Gateway["统一硬件调用网关<br/>超时 · 有限重试 · 熔断 · 降级"]
-    end
-
-    User <-->|"REST 请求 · SSE 流式响应"| API
-    RAG <--> Vector[("PostgreSQL + pgvector<br/>领域知识库")]
-    Router <--> Memory[("Redis<br/>活跃窗口 · 滚动摘要 · 7 天 TTL")]
-
-    subgraph Hardware["Python 硬件智能体 · Agent_SDR / FastAPI / UHD"]
-        direction TB
-        Mcp["FastMCP Adapter"]
-        Http["FastAPI /api/chat"]
-        Http --> AgentLoop["Agent Loop<br/>Skill 匹配 · 限定工具 · ReAct 循环"]
-        AgentLoop --> Registry["统一 ToolRegistry"]
-        Mcp --> Registry
-        Registry --> Guard["Pydantic 参数校验<br/>allowedTools 强制校验"]
-        Guard --> Idempotency["operationId 幂等状态机<br/>跨 MCP / HTTP 原子认领"]
-        Idempotency --> Handler["Handler / SDRController"]
-        Handler --> Device["UHD 驱动 / NI USRP-2943R"]
-    end
-
-    Gateway -->|"MCP：细粒度工具直连"| Mcp
-    Gateway -.->|"失败时复用同一 operationId<br/>降级到 HTTP Bridge"| Http
-    Idempotency <--> OpState[("Redis<br/>RUNNING · SUCCESS · FAILED · UNKNOWN")]
-```
+![Wireless Lab Agent 系统架构](docs/images/architecture/wireless-lab-agent-architecture.png)
 
 在线链路中，控制智能体负责交互、检索和任务编排；硬件智能体负责 Skill 约束、参数校验和 USRP 执行。MCP 直连不会触发第二次模型推理，HTTP Bridge 模式才进入 Python Agent Loop；两条通道复用同一 `operationId`，避免降级时重复执行硬件任务。
 
