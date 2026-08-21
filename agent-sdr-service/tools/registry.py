@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from core.rag import LocalKnowledgeBase
 from hardware.sdr_controller import SDRController
 from hardware.uhd_diagnostics import UhdDiagnosticRunner
@@ -13,12 +15,16 @@ from tools.physical_tools import build_physical_tools
 from tools.transmit_tools import build_transmit_tools
 from tools.video_tools import build_video_tools
 
+if TYPE_CHECKING:
+    from src.operation_idempotency import RedisOperationCoordinator
+
 
 def create_tool_registry(
     controller: SDRController,
     knowledge_base: LocalKnowledgeBase,
     video_controller: VideoStreamController | None = None,
     diagnostic_runner: UhdDiagnosticRunner | None = None,
+    operation_coordinator: "RedisOperationCoordinator | None" = None,
 ) -> ToolRegistry:
     """Create the canonical registry without coupling local execution to MCP."""
     specs: list[ToolSpec] = []
@@ -29,4 +35,4 @@ def create_tool_registry(
         specs.extend(build_device_diagnostic_tools(diagnostic_runner))
     if video_controller is not None:
         specs.extend(build_video_tools(video_controller))
-    return ToolRegistry(specs)
+    return ToolRegistry(specs, operation_coordinator=operation_coordinator)

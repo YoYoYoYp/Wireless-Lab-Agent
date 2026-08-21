@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -99,6 +100,13 @@ public class SdrToolExecutionGateway {
 
     private String execute(ToolCallback delegate, String toolInput, ToolContext toolContext) {
         String toolName = delegate.getToolDefinition().name();
+        String operationId = "sdr-op-" + UUID.randomUUID();
+        String idempotentInput;
+        try {
+            idempotentInput = attachOperationId(toolInput, operationId);
+        } catch (Exception exception) {
+            return invalidToolInput(toolName, operationId, exception);
+        }
         SdrOperationKind kind = SdrOperationKind.fromToolName(toolName);
         int maxAttempts = kind.retrySafe() ? properties.getSafeMaxAttempts() : 1;
         GatewayFailure lastFailure = null;
@@ -110,14 +118,15 @@ public class SdrToolExecutionGateway {
             }
             primaryAttempted = true;
             try {
-                String result = invokeWithTimeout(delegate, toolInput, toolContext, timeoutFor(kind));
+                String result = invokeWithTimeout(
+                        delegate, idempotentInput, toolContext, timeoutFor(kind));
                 circuitBreaker.recordSuccess();
                 return result;
             } catch (GatewayFailure failure) {
                 lastFailure = failure;
                 if (!failure.transportFailure) {
                     circuitBreaker.recordSuccess();
-                    return businessFailure(toolName, failure);
+                    return businessFailure(toolName, operationId, failure);
                 }
                 circuitBreaker.recordFailure();
                 log.warn("Agent_SDR MCP tool {} attempt {}/{} failed: {}",
@@ -129,13 +138,13 @@ public class SdrToolExecutionGateway {
         }
 
         if (!primaryAttempted) {
-            return fallback(toolName, toolInput, "mcp-circuit-open");
+            return fallback(toolName, toolInput, operationId, "mcp-circuit-open");
         }
         if (kind.retrySafe()) {
             String reason = lastFailure == null ? "mcp-unavailable" : lastFailure.errorType;
-            return fallback(toolName, toolInput, reason);
+            return fallback(toolName, toolInput, operationId, reason);
         }
-        return uncertainSideEffect(toolName, lastFailure);
+        return uncertainSideEffect(toolName, operationId, lastFailure);
     }
 
     private String invokeWithTimeout(ToolCallback delegate,
@@ -169,9 +178,13 @@ public class SdrToolExecutionGateway {
                 : properties.getActionTimeout();
     }
 
-    private String fallback(String toolName, String toolInput, String reason) {
-        log.warn("Agent_SDR MCP tool {} degraded to HTTP Bridge, reason={}", toolName, reason);
-        String raw = agentSdrClient.executeToolFallback(toolName, toolInput);
+    private String fallback(String toolName,
+                            String toolInput,
+                            String operationId,
+                            String reason) {
+        log.warn("Agent_SDR MCP tool {} operation {} degraded to HTTP Bridge, reason={}",
+                toolName, operationId, reason);
+        String raw = agentSdrClient.executeToolFallback(toolName, toolInput, operationId);
         try {
             JsonNode parsed = objectMapper.readTree(raw);
             if (parsed instanceof ObjectNode object) {
@@ -186,24 +199,61 @@ public class SdrToolExecutionGateway {
         return raw;
     }
 
-    private String uncertainSideEffect(String toolName, GatewayFailure failure) {
+    private String uncertainSideEffect(String toolName,
+                                       String operationId,
+                                       GatewayFailure failure) {
+        JsonNode observed = agentSdrClient.operationStatus(operationId);
+        if (observed != null && observed.isObject()) {
+            String state = observed.path("operationState").asText();
+            if ("SUCCESS".equals(state) || "FAILED".equals(state) || "RUNNING".equals(state)) {
+                ObjectNode reconciled = ((ObjectNode) observed).deepCopy();
+                reconciled.put("channel", "operation-status");
+                reconciled.put("reconciledAfterMcpFailure", true);
+                return reconciled.toPrettyString();
+            }
+        }
         ObjectNode result = objectMapper.createObjectNode();
         result.put("status", "error");
         result.put("errorType", failure == null ? "MCP_CALL_FAILED" : failure.errorType);
         result.put("retryable", false);
         result.put("executionState", "UNKNOWN");
+        result.put("operationState", "UNKNOWN");
         result.put("tool", toolName);
+        result.put("operationId", operationId);
         result.put("message", "MCP 调用失败，硬件动作是否已经执行无法确认；为避免重复操作，未自动重试或切换 HTTP Bridge，请先查询设备和任务状态。");
         return result.toPrettyString();
     }
 
-    private String businessFailure(String toolName, GatewayFailure failure) {
+    private String businessFailure(String toolName,
+                                   String operationId,
+                                   GatewayFailure failure) {
         ObjectNode result = objectMapper.createObjectNode();
         result.put("status", "error");
         result.put("errorType", failure.errorType);
         result.put("retryable", false);
         result.put("tool", toolName);
+        result.put("operationId", operationId);
         result.put("message", failure.getMessage());
+        return result.toPrettyString();
+    }
+
+    private String attachOperationId(String toolInput, String operationId) throws Exception {
+        JsonNode parsed = objectMapper.readTree(toolInput == null || toolInput.isBlank() ? "{}" : toolInput);
+        if (!(parsed instanceof ObjectNode object)) {
+            throw new IllegalArgumentException("工具参数必须是 JSON 对象");
+        }
+        object.put("operation_id", operationId);
+        return objectMapper.writeValueAsString(object);
+    }
+
+    private String invalidToolInput(String toolName, String operationId, Exception exception) {
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("status", "error");
+        result.put("errorType", "INVALID_TOOL_ARGUMENTS");
+        result.put("retryable", false);
+        result.put("tool", toolName);
+        result.put("operationId", operationId);
+        result.put("message", safeMessage(exception));
         return result.toPrettyString();
     }
 

@@ -1,4 +1,4 @@
-"""Lightweight skill metadata for rule matching and prompt injection."""
+"""Skill metadata for rule matching, prompt guidance and tool allow-lists."""
 
 from __future__ import annotations
 
@@ -10,16 +10,28 @@ from pathlib import Path
 
 @dataclass
 class SkillSpec:
-    """Usage guidance for one registered tool; it never executes hardware."""
+    """Usage guidance and allowed capabilities; it never executes hardware."""
 
     name: str
     description: str
     target_tool: str
     system_prompt: str
+    allowed_tools: list[str] = field(default_factory=list)
     category: str = "hardware"
     trigger_patterns: list[str] = field(default_factory=list)
     trigger_keywords: list[str] = field(default_factory=list)
     exclude_patterns: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Backward-compatible default: a single-tool skill may invoke only its
+        # target tool unless the Markdown explicitly declares a larger set.
+        if not self.allowed_tools:
+            self.allowed_tools = [self.target_tool]
+        self.allowed_tools = list(dict.fromkeys(self.allowed_tools))
+        if self.target_tool not in self.allowed_tools:
+            raise ValueError(
+                f"Skill {self.name} target_tool must be included in allowed_tools"
+            )
 
     # ── matching ──
 
@@ -108,6 +120,8 @@ def load_skill_from_md(
         trigger_keywords:
           - keyword1
           - keyword2
+        allowed_tools:
+          - tool_name
         exclude_patterns:
           - "exclude_regex"
         ---
@@ -140,6 +154,7 @@ def load_skill_from_md(
     trigger_patterns = metadata.get("trigger_patterns", [])
     trigger_keywords = metadata.get("trigger_keywords", [])
     exclude_patterns = metadata.get("exclude_patterns", [])
+    allowed_tools = metadata.get("allowed_tools", [])
 
     # Body is the system_prompt (strip leading heading and blank lines)
     system_prompt = _strip_markdown_heading(body)
@@ -154,6 +169,7 @@ def load_skill_from_md(
         description=description,
         target_tool=target_tool,
         system_prompt=system_prompt,
+        allowed_tools=allowed_tools,
         category=category,
         trigger_patterns=trigger_patterns,
         trigger_keywords=trigger_keywords,

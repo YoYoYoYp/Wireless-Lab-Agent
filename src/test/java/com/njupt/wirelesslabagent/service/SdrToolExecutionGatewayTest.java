@@ -8,6 +8,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.beans.factory.ObjectProvider;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Duration;
 
@@ -35,7 +36,7 @@ class SdrToolExecutionGatewayTest {
     }
 
     @Test
-    void shouldRetryReadOnlyToolAndReturnPrimarySuccess() {
+    void shouldRetryReadOnlyToolAndReturnPrimarySuccess() throws Exception {
         ToolCallback query = callback("query_usrp_device_parameters");
         when(query.call(anyString()))
                 .thenThrow(new IllegalStateException("temporary mcp failure"))
@@ -46,7 +47,14 @@ class SdrToolExecutionGatewayTest {
         String result = gateway.mcpTools().getToolCallbacks()[0].call("{}");
 
         assertTrue(result.contains("success"));
-        verify(query, times(2)).call("{}");
+        ArgumentCaptor<String> inputs = ArgumentCaptor.forClass(String.class);
+        verify(query, times(2)).call(inputs.capture());
+        String firstOperationId = new ObjectMapper().readTree(inputs.getAllValues().get(0))
+                .path("operation_id").asText();
+        String secondOperationId = new ObjectMapper().readTree(inputs.getAllValues().get(1))
+                .path("operation_id").asText();
+        assertFalse(firstOperationId.isBlank());
+        assertEquals(firstOperationId, secondOperationId);
         verifyNoInteractions(http);
         assertEquals(SdrCircuitBreaker.State.CLOSED, gateway.circuitState());
     }
@@ -64,8 +72,12 @@ class SdrToolExecutionGatewayTest {
         assertEquals("error", json.path("status").asText());
         assertEquals("UNKNOWN", json.path("executionState").asText());
         assertFalse(json.path("retryable").asBoolean());
-        verify(transmit).call("{\"text\":\"NJUPT\"}");
-        verifyNoInteractions(http);
+        ArgumentCaptor<String> input = ArgumentCaptor.forClass(String.class);
+        verify(transmit).call(input.capture());
+        String operationId = new ObjectMapper().readTree(input.getValue())
+                .path("operation_id").asText();
+        assertEquals(operationId, json.path("operationId").asText());
+        verify(http).operationStatus(operationId);
     }
 
     @Test
@@ -79,9 +91,52 @@ class SdrToolExecutionGatewayTest {
         String result = gateway.mcpTools().getToolCallbacks()[0].call("{}");
 
         assertTrue(result.contains("USRP 未连接"));
-        verify(query).call("{}");
+        verify(query).call(anyString());
         verifyNoInteractions(http);
         assertEquals(SdrCircuitBreaker.State.CLOSED, gateway.circuitState());
+    }
+
+    @Test
+    void shouldReuseSameOperationIdWhenReadOnlyToolFallsBackToHttp() throws Exception {
+        ToolCallback query = callback("query_usrp_device_parameters");
+        when(query.call(anyString())).thenThrow(new IllegalStateException("mcp down"));
+        AgentSdrClient http = mock(AgentSdrClient.class);
+        when(http.executeToolFallback(anyString(), anyString(), anyString()))
+                .thenReturn("{\"status\":\"success\",\"operationState\":\"SUCCESS\"}");
+        gateway = gateway(http, properties(3, 1), query);
+
+        gateway.mcpTools().getToolCallbacks()[0].call("{}");
+
+        ArgumentCaptor<String> mcpInput = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> httpOperationId = ArgumentCaptor.forClass(String.class);
+        verify(query).call(mcpInput.capture());
+        verify(http).executeToolFallback(
+                eq("query_usrp_device_parameters"), eq("{}"), httpOperationId.capture());
+        String mcpOperationId = new ObjectMapper().readTree(mcpInput.getValue())
+                .path("operation_id").asText();
+        assertEquals(mcpOperationId, httpOperationId.getValue());
+    }
+
+    @Test
+    void shouldReconcileSideEffectFromOperationStateWithoutExecutingHttpFallback() throws Exception {
+        ToolCallback transmit = callback("text_fsk_send_and_receive");
+        when(transmit.call(anyString())).thenThrow(new IllegalStateException("response lost"));
+        AgentSdrClient http = mock(AgentSdrClient.class);
+        when(http.operationStatus(anyString())).thenAnswer(invocation -> {
+            String operationId = invocation.getArgument(0, String.class);
+            return new ObjectMapper().readTree("""
+                    {"status":"success","operationState":"SUCCESS","operationId":"%s"}
+                    """.formatted(operationId));
+        });
+        gateway = gateway(http, properties(3, 1), transmit);
+
+        String result = gateway.mcpTools().getToolCallbacks()[0]
+                .call("{\"text\":\"NJUPT\"}");
+
+        var json = new ObjectMapper().readTree(result);
+        assertEquals("SUCCESS", json.path("operationState").asText());
+        assertTrue(json.path("reconciledAfterMcpFailure").asBoolean());
+        verify(http, never()).executeToolFallback(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -97,7 +152,7 @@ class SdrToolExecutionGatewayTest {
         var json = new ObjectMapper().readTree(result);
         assertEquals("INVALID_TOOL_ARGUMENTS", json.path("errorType").asText());
         assertFalse(json.path("retryable").asBoolean());
-        verify(query).call("{}");
+        verify(query).call(anyString());
         verifyNoInteractions(http);
         assertEquals(SdrCircuitBreaker.State.CLOSED, gateway.circuitState());
     }
@@ -108,7 +163,7 @@ class SdrToolExecutionGatewayTest {
         ToolCallback transmit = callback("text_fsk_send_and_receive");
         when(query.call(anyString())).thenThrow(new IllegalStateException("mcp down"));
         AgentSdrClient http = mock(AgentSdrClient.class);
-        when(http.executeToolFallback(anyString(), anyString()))
+        when(http.executeToolFallback(anyString(), anyString(), anyString()))
                 .thenReturn("{\"status\":\"success\"}");
         gateway = gateway(http, properties(1, 1), query, transmit);
 
@@ -119,7 +174,8 @@ class SdrToolExecutionGatewayTest {
         assertTrue(queryResult.contains("\"degraded\" : true"));
         assertTrue(transmitResult.contains("\"degraded\" : true"));
         verify(transmit, never()).call(anyString());
-        verify(http).executeToolFallback(eq("text_fsk_send_and_receive"), anyString());
+        verify(http).executeToolFallback(
+                eq("text_fsk_send_and_receive"), anyString(), anyString());
     }
 
     private SdrToolExecutionGateway gateway(AgentSdrClient http,

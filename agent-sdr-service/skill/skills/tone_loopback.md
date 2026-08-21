@@ -2,6 +2,8 @@
 name: tone_loopback_visualize
 description: 启动连续 Tone/正弦波回环任务，实时显示波形和 FFT 频谱到可视化窗口。
 category: hardware
+allowed_tools:
+  - tone_loopback_visualize
 trigger_patterns:
   - "正弦|tone|单音|可视化|波形.*频谱|频谱.*波形|框图"
 trigger_keywords:
@@ -22,6 +24,11 @@ trigger_keywords:
 - center_freq_hz：默认 2.4 GHz
 - tone_freq_hz：默认 100 kHz
 - samp_rate：默认 1 MHz
+
+## 服务端硬约束
+- center_freq_hz：1.2 GHz 到 6.0 GHz。
+- samp_rate：100 kHz 到 40 MHz。
+- tone_freq_hz 必须小于 samp_rate/2，避免混叠。
 
 ## 执行规则
 - 从用户指令中提取频率参数。

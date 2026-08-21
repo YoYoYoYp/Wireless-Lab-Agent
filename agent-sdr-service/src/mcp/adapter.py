@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,7 +45,11 @@ def create_sdr_mcp(
         return mcp.tool(name=spec.name, description=spec.description)
 
     async def invoke(name: str, payload: dict[str, Any]) -> str:
-        result = await tool_registry.execute(name, payload)
+        arguments = dict(payload)
+        operation_id = arguments.pop("operation_id", None) or f"mcp-{uuid.uuid4()}"
+        result = await tool_registry.execute(
+            name, arguments, operation_id=operation_id
+        )
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     @expose("perform_physical_scan")
@@ -53,6 +58,7 @@ def create_sdr_mcp(
         bandwidth_hz: float = 1_000_000.0,
         duration_s: float = 0.2,
         chan: int = 0,
+        operation_id: str | None = None,
     ) -> str:
         return await invoke("perform_physical_scan", locals())
 
@@ -61,12 +67,13 @@ def create_sdr_mcp(
         center_freq_hz: float = 2_400_000_000.0,
         tone_freq_hz: float = 100_000.0,
         samp_rate: float = 1_000_000.0,
+        operation_id: str | None = None,
     ) -> str:
         return await invoke("tone_loopback_visualize", locals())
 
     @expose("stop_hardware_task")
-    async def stop_hardware_task() -> str:
-        return await invoke("stop_hardware_task", {})
+    async def stop_hardware_task(operation_id: str | None = None) -> str:
+        return await invoke("stop_hardware_task", locals())
 
     @expose("text_fsk_send_and_receive")
     async def text_fsk_send_and_receive(
@@ -80,6 +87,7 @@ def create_sdr_mcp(
         rx_gain: float = 20.0,
         amp: float = 0.6,
         packet_repetitions: int = 3,
+        operation_id: str | None = None,
     ) -> str:
         return await invoke("text_fsk_send_and_receive", locals())
 
@@ -88,6 +96,7 @@ def create_sdr_mcp(
         text: str,
         center_freq_hz: float = 2_400_000_000.0,
         probe_text: str = "channel_probe",
+        operation_id: str | None = None,
     ) -> str:
         return await invoke("adaptive_modulation_transmit", locals())
 
@@ -100,11 +109,16 @@ def create_sdr_mcp(
         enable_tone: bool = False,
         tone_freq_hz: float = 100_000.0,
         use_adaptive_modulation: bool = False,
+        operation_id: str | None = None,
     ) -> str:
         return await invoke("auto_optimal_transmit", locals())
 
     @expose("search_sdr_knowledge")
-    async def search_sdr_knowledge(query: str, top_k: int = 3) -> str:
+    async def search_sdr_knowledge(
+        query: str,
+        top_k: int = 3,
+        operation_id: str | None = None,
+    ) -> str:
         return await invoke("search_sdr_knowledge", locals())
 
     if tool_registry.has_tool("query_usrp_device_parameters"):
@@ -113,22 +127,23 @@ def create_sdr_mcp(
         async def query_usrp_device_parameters(
             action: str = "summary",
             device_ip: str | None = None,
+            operation_id: str | None = None,
         ) -> str:
             return await invoke("query_usrp_device_parameters", locals())
 
     if tool_registry.has_tool("start_video_stream"):
 
         @expose("start_video_stream")
-        async def start_video_stream() -> str:
-            return await invoke("start_video_stream", {})
+        async def start_video_stream(operation_id: str | None = None) -> str:
+            return await invoke("start_video_stream", locals())
 
         @expose("stop_video_stream")
-        async def stop_video_stream() -> str:
-            return await invoke("stop_video_stream", {})
+        async def stop_video_stream(operation_id: str | None = None) -> str:
+            return await invoke("stop_video_stream", locals())
 
         @expose("video_stream_status")
-        async def video_stream_status() -> str:
-            return await invoke("video_stream_status", {})
+        async def video_stream_status(operation_id: str | None = None) -> str:
+            return await invoke("video_stream_status", locals())
 
     @mcp.resource(
         uri="sdr://hardware/status",

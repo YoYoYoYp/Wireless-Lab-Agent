@@ -2,6 +2,8 @@
 name: query_usrp_device_parameters
 description: 使用受限UHD诊断命令查询USRP设备参数、驱动版本和网络连通性。
 category: hardware
+allowed_tools:
+  - query_usrp_device_parameters
 trigger_patterns:
   - "(查询|查看|获取|检测|探测).{0,12}(USRP|UHD|设备).{0,8}(参数|型号|序列号|版本|信息|主板|子板)"
   - "(uhd_usrp_probe|uhd_find_devices|uhd_config_info)"

@@ -2,6 +2,8 @@
 name: search_sdr_knowledge
 description: 查询 SDR 理论知识库，分析硬件执行结果并给出诊断建议。
 category: knowledge
+allowed_tools:
+  - search_sdr_knowledge
 trigger_patterns:
   - "什么是|是什么|为什么|请解释|解释一下|知识|文档|手册|资料|原理"
   - "讲讲|说说|告诉我|跟我讲|想了解|如何理解|怎么理解"

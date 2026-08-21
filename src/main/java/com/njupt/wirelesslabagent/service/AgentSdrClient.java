@@ -2,6 +2,7 @@ package com.njupt.wirelesslabagent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.njupt.wirelesslabagent.config.SdrResilienceProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -54,32 +55,51 @@ public class AgentSdrClient {
     }
 
     public JsonNode stopHardwareTask() {
-        return post("/api/hardware/stop", Map.of());
-    }
-
-    public String executeInstruction(String instruction) {
-        return pretty(executeInstructionResult(instruction));
-    }
-
-    public JsonNode executeInstructionResult(String instruction) {
-        return post("/api/chat", Map.of(
-                "instruction", instruction,
-                "session_id", "spring-bridge-" + UUID.randomUUID(),
-                "mode", agentMode
+        return post("/api/hardware/stop", Map.of(
+                "operation_id", newOperationId("http-stop")
         ));
     }
 
-    public String executeToolFallback(String toolName, String toolInput) {
-        if ("stop_hardware_task".equals(toolName)) {
-            return pretty(stopHardwareTask());
+    public String executeInstruction(String instruction) {
+        return pretty(executeInstructionResult(instruction, newOperationId("http-chat")));
+    }
+
+    public JsonNode executeInstructionResult(String instruction) {
+        return executeInstructionResult(instruction, newOperationId("http-chat"));
+    }
+
+    public JsonNode executeInstructionResult(String instruction, String operationId) {
+        return post("/api/chat", Map.of(
+                "instruction", instruction,
+                "session_id", "spring-bridge-" + UUID.randomUUID(),
+                "mode", agentMode,
+                "operation_id", operationId
+        ));
+    }
+
+    public String executeToolFallback(String toolName, String toolInput, String operationId) {
+        JsonNode arguments;
+        try {
+            arguments = objectMapper.readTree(toolInput);
+            if (arguments == null || !arguments.isObject()) {
+                arguments = objectMapper.createObjectNode();
+            }
+            if (arguments.isObject()) {
+                ((ObjectNode) arguments).remove("operation_id");
+            }
+        } catch (Exception exception) {
+            return pretty(error("INVALID_TOOL_ARGUMENTS",
+                    "HTTP 降级参数不是合法 JSON: " + exception.getMessage(), false));
         }
-        String instruction = """
-                MCP 主通道当前不可用，请通过 HTTP Bridge 执行降级任务。
-                目标工具：%s
-                参数 JSON：%s
-                必须保持参数原值并调用真实工具；若设备、驱动或参数不可用，返回真实错误，禁止编造成功结果。
-                """.formatted(toolName, toolInput);
-        return executeInstruction(instruction);
+        return pretty(post("/api/tools/execute", Map.of(
+                "operation_id", operationId,
+                "tool_name", toolName,
+                "arguments", arguments
+        )));
+    }
+
+    public JsonNode operationStatus(String operationId) {
+        return get("/api/operations/" + operationId);
     }
 
     private JsonNode get(String uri) {
@@ -151,5 +171,9 @@ public class AgentSdrClient {
         } catch (Exception exception) {
             return response.toString();
         }
+    }
+
+    private String newOperationId(String prefix) {
+        return prefix + "-" + UUID.randomUUID();
     }
 }

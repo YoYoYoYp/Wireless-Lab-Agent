@@ -79,6 +79,18 @@ def _agent_id_for_tool(tool_name: str) -> str:
     return "usrp"
 
 
+def _child_operation_id(
+    parent_operation_id: str,
+    turn: int,
+    tool_index: int,
+    tool_name: str,
+) -> str:
+    candidate = f"{parent_operation_id}:{turn}:{tool_index}:{tool_name}"
+    if len(candidate) <= 128:
+        return candidate
+    return f"op-{uuid.uuid5(uuid.NAMESPACE_URL, candidate)}"
+
+
 async def _post_console_event(
     agent_id: str,
     run_id: str,
@@ -237,6 +249,7 @@ class AgentLoop:
         temperature: float | None = None,
         max_turns: int | None = None,
         run_id: str | None = None,
+        operation_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Execute the agent loop, yielding SSE-compatible events.
 
@@ -254,6 +267,7 @@ class AgentLoop:
         active_temp = self.resolve_temperature(selected_mode, temperature)
         max_turns = max_turns or settings.max_tool_turns
         run_id = run_id or str(uuid.uuid4())
+        operation_id = operation_id or f"agent-{uuid.uuid4()}"
 
         # ── Step 1: Skill matching ──
         skill = None
@@ -280,8 +294,9 @@ class AgentLoop:
             skill=skill,
         )
 
-        # ── Step 3: Get tools ──
-        openai_tools = self.tools.as_openai_tools()
+        # ── Step 3: Expose only tools allowed by the matched skill ──
+        allowed_tool_names = set(skill.allowed_tools) if skill is not None else None
+        openai_tools = self.tools.as_openai_tools(names=allowed_tool_names)
 
         # ── Meta event ──
         request_start = time.perf_counter()
@@ -292,6 +307,8 @@ class AgentLoop:
             "active_temperature": active_temp,
             "skill_matched": skill.name if skill else None,
             "skill_confidence": confidence if skill else 0.0,
+            "allowed_tools": sorted(allowed_tool_names) if allowed_tool_names else None,
+            "operationId": operation_id,
         }
 
         tool_logs: list[str] = []
@@ -391,7 +408,8 @@ class AgentLoop:
                             "content": (
                                 "⚠️ 你刚才没有调用任何工具！当前请求是硬件执行动作，"
                                 "你必须调用工具来实际操作 USRP，禁止直接用文字假装已经执行。"
-                                f"请立即调用 {skill.target_tool} 工具。"
+                                "请立即从当前 Skill 允许的工具中选择与用户指令一致的工具："
+                                f"{', '.join(skill.allowed_tools)}。"
                             ),
                         })
                         yield {
@@ -410,9 +428,12 @@ class AgentLoop:
                 messages.append(_assistant_msg(assistant_text, tool_calls))
 
                 # Execute each tool call
-                for tc in tool_calls:
+                for tool_index, tc in enumerate(tool_calls):
                     fn = tc.get("function", {})
                     tool_name = fn.get("name", "")
+                    tool_operation_id = _child_operation_id(
+                        operation_id, turn, tool_index, tool_name
+                    )
                     try:
                         tool_args = json.loads(fn.get("arguments", "{}"))
                     except json.JSONDecodeError:
@@ -435,6 +456,7 @@ class AgentLoop:
                             "type": "tool_call",
                             "name": tool_name,
                             "args": tool_args,
+                            "operationId": tool_operation_id,
                         }
                         yield {
                             "type": "tool_result",
@@ -450,6 +472,7 @@ class AgentLoop:
                         "type": "tool_call",
                         "name": tool_name,
                         "args": tool_args,
+                        "operationId": tool_operation_id,
                     }
                     yield {"type": "tool_log", "line": log_line}
 
@@ -469,7 +492,12 @@ class AgentLoop:
 
                     # Execute locally through the shared validated registry.
                     tool_start = time.perf_counter()
-                    result_obj = await self.tools.execute(tool_name, tool_args)
+                    result_obj = await self.tools.execute(
+                        tool_name,
+                        tool_args,
+                        operation_id=tool_operation_id,
+                        allowed_tools=allowed_tool_names,
+                    )
                     result_json = json.dumps(result_obj, ensure_ascii=False, indent=2)
                     tool_elapsed = _elapsed_ms(tool_start)
 
@@ -484,6 +512,7 @@ class AgentLoop:
                         "name": tool_name,
                         "result": result_obj,
                         "elapsed_ms": tool_elapsed,
+                        "operationId": tool_operation_id,
                     }
 
                     # Fire-and-forget: notify console tool completed
@@ -507,6 +536,7 @@ class AgentLoop:
                             "args": tool_args,
                             "status": result_obj.get("status", "unknown"),
                             "elapsed_ms": tool_elapsed,
+                            "operationId": tool_operation_id,
                         }
                     )
 
@@ -580,6 +610,7 @@ class AgentLoop:
                 "tools_executed": tools_executed,
                 "tools_failed": tools_failed,
                 "tools_total": len(tool_call_history),
+                "operationId": operation_id,
                 "timing": {
                     "total_ms": total_ms,
                     "tool_calls": tool_call_history,
@@ -605,4 +636,5 @@ class AgentLoop:
                 "message": str(exc),
                 "hardware_logs": tool_logs,
                 "reply": final_reply,
+                "operationId": operation_id,
             }

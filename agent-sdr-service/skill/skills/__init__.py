@@ -32,5 +32,5 @@ def _load_skills() -> dict[str, SkillSpec]:
 
 
 def build_all_skills() -> SkillRegistry:
-    """Build prompt-only skills; execution belongs to ToolRegistry."""
+    """Build prompt/allow-list skills; execution still belongs to ToolRegistry."""
     return SkillRegistry(list(_load_skills().values()))

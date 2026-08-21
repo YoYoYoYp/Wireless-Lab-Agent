@@ -2,6 +2,8 @@
 name: stop_hardware_task
 description: 停止当前占用 USRP 的后台物理层任务并释放设备。
 category: hardware
+allowed_tools:
+  - stop_hardware_task
 trigger_patterns:
   - "(停止|关闭|停掉|停下|终止){1}"
 trigger_keywords:

@@ -2,6 +2,8 @@
 name: adaptive_modulation_transmit
 description: 先探测链路 SNR，再自动选择 BPSK/QPSK/16-QAM 完成文本收发。
 category: hardware
+allowed_tools:
+  - adaptive_modulation_transmit
 trigger_patterns:
   - "自适应|根据.{0,5}snr|根据.{0,5}信道质量|自动选择.*调制"
 trigger_keywords:
@@ -23,6 +25,10 @@ exclude_patterns:
 - text（必需）：从用户指令中提取要发送的文本。
 - center_freq_hz：默认 2.4 GHz。
 - probe_text：默认 "channel_probe"，无需修改。
+
+## 服务端硬约束
+- center_freq_hz：1.2 GHz 到 6.0 GHz。
+- text 最长 256 个字符，probe_text 最长 64 个字符。
 
 ## SNR 决策规则（SDRController 内部执行）
 - SNR < -18 dB → BPSK（最鲁棒）

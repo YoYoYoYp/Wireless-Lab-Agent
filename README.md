@@ -9,13 +9,14 @@
 - 多策略 RAG：单查询、Query Rewrite、历史压缩、多查询扩展，以及“低阈值粗召回 → 去重 → DashScope Rerank 精排”。
 - 本地大模型：Java 控制面与 Agent_SDR 均通过 OpenAI 兼容接口调用实验室部署的 Qwen3.5-122B，业务对话不依赖云端 Chat API。
 - 请求路由：原理/规格/实验流程走 RAG；设备状态、扫频、发射、调制解调和停止请求走 Tool Calling。
-- Agent_SDR 双通道：默认通过 HTTP Agent Bridge 调用 FastAPI；启用 MCP 后直接加载 Agent_SDR 的 USRP 工具。
+- 能力约束：只有 `DEVICE` 路由向 Java 模型暴露硬件工具；HTTP Agent 模式匹配 Skill 后只暴露其 `allowed_tools`，ToolRegistry 再执行一次白名单校验。
+- Agent_SDR 双通道：默认通过 HTTP Agent Bridge 调用 FastAPI；启用 MCP 后直接加载 Agent_SDR 的 USRP 工具，运行时可按操作类型安全降级到 HTTP 直连工具接口。
 - USRP 能力：扫频测底噪、Tone 可视化、2-FSK/BPSK/QPSK/16-QAM 文本收发、自适应调制、认知选频和任务停止。
 - 异步知识入库：上传文档后立即返回任务 ID，Redis List 消费者异步完成 Tika 解析、切片、关键词增强和 PGVector 写入。
 - 分层会话记忆：Redis 保留最近 20 条精确消息，更早消息异步合并为滚动摘要；摘要任务用 `SET NX` 抢锁并通过 Lua 原子比较 token 后释放，所有会话键按用户隔离并采用 7 天滑动 TTL。
 - 设备态势面板：浏览器每 3 秒轮询 Agent_SDR，展示连接状态、中心频率、采样率、增益、调制方式和诊断信息。
 - RAG 评估：49 条标注到具体知识来源的 SDR 问题，计算 Hit Rate、Recall、Precision、MAP、NDCG、MRR；生成评测使用实际检索上下文并设置质量门槛。
-- 故障降级：路由器异常回退单查询；查询变换失败回退原始查询；多查询、Rerank、PGVector 分别降级为单查询、粗排和无 RAG 回答。MCP 工具经过统一调用网关执行分级超时、安全重试和熔断；查询/停止类失败可降级 HTTP Bridge，发射等有副作用操作调用后失败不盲目重试。
+- 故障降级：路由器异常回退单查询；查询变换失败回退原始查询；多查询、Rerank、PGVector 分别降级为单查询、粗排和无 RAG 回答。MCP 工具经过统一调用网关执行分级超时、安全重试和熔断；MCP 与 HTTP 复用 operationId 和 Redis 状态机，重复请求不重复操作硬件，结果不确定时禁止自动补做。
 
 ## 演示与来源
 
@@ -42,7 +43,7 @@
 | Advisors | 保留并接入 | Permission、Memory、日志、RE2，以及单查询、重写、翻译、历史压缩、多查询扩展和 Rerank 链路 |
 | Java Tools | 场景化改造 | `SdrHardwareTool` 负责硬件桥接，`WebSearchTool` 在本地检索证据不足或需要最新资料时调用 Tavily 并保留来源 URL |
 | Spring AI MCP Client | 保留并接入 | `SDR_MCP_ENABLED=true` 时自动加载 Agent_SDR MCP 工具，并由统一网关包装超时、重试、熔断和 HTTP Bridge 降级 |
-| Agent_SDR Tools/Skills | 保留并接入 | Skill 只负责规则匹配与操作说明，统一 ToolRegistry 负责 Pydantic 校验和执行；FastMCP 将同一组工具对外暴露，不开放任意终端 |
+| Agent_SDR Tools/Skills | 保留并接入 | Skill 负责规则匹配、操作说明和工具白名单；统一 ToolRegistry 再强制校验白名单、Pydantic 参数策略和 operationId；FastMCP 将同一组受校验工具对外暴露，不开放任意终端 |
 
 ## 架构
 
@@ -57,8 +58,10 @@ flowchart LR
     Router -->|"设备动作"| Tools["Tool Calling"]
     Tools --> Gateway["SdrToolExecutionGateway / 分级容错"]
     Gateway -->|"MCP / SSE 主通道"| SDR["本地 agent-sdr-service / FastAPI"]
-    Gateway -.->|"熔断前置或安全操作失败 / HTTP Bridge"| SDR
+    Gateway -.->|"同一 operationId / HTTP 直连工具降级"| SDR
     SDR --> Registry["统一 ToolRegistry / Pydantic 校验"]
+    Registry --> Operation["operationId 状态机 / Lua 原子认领"]
+    Operation --> OperationRedis[("Redis RUNNING / SUCCESS / FAILED / UNKNOWN")]
     Registry --> Diagnostics["UHD 诊断命令白名单"]
     Registry --> UHD["UHD / USRP"]
     Diagnostics --> UHD["UHD / USRP"]
@@ -83,8 +86,11 @@ flowchart LR
 RIS 外部设备  → 已注册的 MCP 工具，不在本地伪造执行结果
 
 RAG 降级链路  → MULTI → SINGLE → NONE；Rerank 失败保留粗排结果
-硬件容错链路  → MCP 分级超时 → 查询/停止类有限重试 → 熔断 → HTTP Bridge → 明确不可用
-安全边界      → 参数错误/设备忙/USRP 离线不计入熔断；有副作用工具调用后失败不自动重试或跨通道执行
+硬件容错链路  → MCP 分级超时 → 安全操作有限重试 → 熔断/HTTP 直连工具降级 → 明确不可用
+跨通道幂等    → Java 生成 operationId → MCP/HTTP 复用 → Redis 原子认领 → ToolRegistry/Handler
+安全边界      → 参数错误/设备忙/USRP 离线不计入熔断；UNKNOWN 不自动重试，先按 operationId 查询状态
+工具暴露边界  → 非 DEVICE 路由不加载硬件工具；Python Skill 只暴露 allowed_tools，越权调用由 ToolRegistry 拒绝
+射频参数边界  → 当前 USRP-2943R 的频率、增益、幅度、调制方式和采样规模由 Pydantic 硬校验
 ```
 
 ## 技术栈
@@ -175,17 +181,21 @@ wireless-lab-agent/
 ├── agent-sdr-service/                            # 从 Agent_SDR 提取的本地 Python 执行面
 │   ├── src/
 │   │   ├── agent/                                # 本地模型循环与上下文组装
-│   │   └── mcp/adapter.py                        # ToolRegistry 的 MCP SSE/stdio 适配层
+│   │   ├── mcp/adapter.py                        # ToolRegistry 的 MCP SSE/stdio 适配层
+│   │   └── operation_idempotency.py              # MCP/HTTP 共享 Redis 幂等状态机
 │   ├── hardware/
 │   │   ├── sdr_controller.py                     # UHD/USRP 收发与调制解调
 │   │   └── uhd_diagnostics.py                    # shell=false 的 UHD 命令白名单
 │   ├── skill/
-│   │   ├── skill_spec.py                         # 规则匹配与提示词注入模型
+│   │   ├── skill_spec.py                         # 规则匹配、提示词注入与 allowed_tools
 │   │   └── skills/device_diagnostics.md          # 设备参数诊断 Skill
 │   ├── core/                                     # 会话记忆与知识应用客户端
 │   ├── tools/
 │   │   ├── __init__.py                           # ToolSpec 与统一 ToolRegistry
+│   │   ├── policy.py                             # 当前 USRP 射频与资源使用硬约束
 │   │   └── registry.py                           # 全部硬件/知识工具一次性组装
+│   ├── tests/test_operation_idempotency.py        # 重复、并发、冲突和 UNKNOWN 测试
+│   ├── tests/test_skill_policy.py                 # Skill 白名单与射频参数边界测试
 │   ├── tests/test_uhd_diagnostics.py             # 注入、IP校验与白名单测试
 │   ├── static/                                   # 独立 SDR Web 控制台
 │   ├── data/                                     # SDR/USRP 知识资料
@@ -275,7 +285,9 @@ $env:SDR_MCP_ENABLED='true'
 
 MCP SSE 完整入口为 `/mcp/sse`。
 
-启用 MCP 后，控制面不再同时把粗粒度 HTTP 硬件工具交给模型自由选择，而是统一通过 `SdrToolExecutionGateway` 包装远程 ToolCallback：查询、诊断、扫频和停止类操作最多尝试 2 次；连续传输故障达到 3 次后熔断 30 秒，熔断期间直接走 HTTP Bridge；半开状态只使用无副作用工具探测恢复。参数错误、设备忙、UHD/USRP 离线属于共同下游的业务失败，不触发重试和熔断。发射、Tone、视频启动等有副作用操作如果 MCP 已经发起后超时，返回 `executionState=UNKNOWN` 并要求先查询状态，不自动跨通道重复执行。
+启用 MCP 后，控制面不再同时把粗粒度 HTTP 硬件工具交给模型自由选择，而是统一通过 `SdrToolExecutionGateway` 包装远程 ToolCallback。网关为每次业务操作生成一个 `operationId`，MCP 的有限重试和 HTTP 降级始终复用该编号；HTTP 降级直接调用 `/api/tools/execute`，不会再让 Python 模型做第二次工具选择。Python 在 Pydantic 校验后、Handler 执行前，通过 Redis Lua 原子创建 `RUNNING` 记录和执行租约，同一编号只能有一个请求进入硬件代码：已完成请求回放 `SUCCESS/FAILED` 结果，执行中的重复请求返回 `RUNNING`，相同编号配不同工具或参数返回冲突。
+
+查询、诊断、扫频和停止类操作最多尝试 2 次；连续传输故障达到 3 次后熔断 30 秒，熔断期间直接走 HTTP 工具接口。参数错误、设备忙、UHD/USRP 离线属于共同下游的业务失败，不触发重试和熔断。有副作用操作在 MCP 响应丢失后先查询 `/api/operations/{operationId}`：能查到结果就直接返回；租约过期或结果落库失败时返回 `UNKNOWN`，不自动重试。该设计提供的是可观测的“至多执行一次”保护，不宣称物理动作与 Redis 写入之间具有分布式事务；若硬件已经动作但进程在结果写回前崩溃，只能人工或通过设备状态确认。
 
 ```powershell
 $env:SDR_MCP_READ_TIMEOUT='8s'
@@ -283,6 +295,14 @@ $env:SDR_MCP_ACTION_TIMEOUT='60s'
 $env:SDR_SAFE_MAX_ATTEMPTS='2'
 $env:SDR_CIRCUIT_FAILURE_THRESHOLD='3'
 $env:SDR_CIRCUIT_OPEN_DURATION='30s'
+```
+
+Python 执行面的幂等记录默认保留 7 天，执行租约默认 5 分钟。租约应大于最长硬件工具执行时间；Redis 不可用时系统采取 fail-closed，拒绝执行硬件工具，避免两条通道绕过幂等边界。
+
+```powershell
+$env:REDIS_URL='redis://127.0.0.1:6379/0'
+$env:OPERATION_RECORD_TTL_SECONDS='604800'
+$env:OPERATION_LEASE_SECONDS='300'
 ```
 
 ### 会话记忆配置

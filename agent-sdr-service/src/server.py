@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from src.agent.loop import _agent_id_for_tool, _post_console_event
 from src.config import settings
 from src.mcp import create_sdr_mcp
+from src.operation_idempotency import RedisOperationCoordinator
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Bootstrap — same as old main.py
@@ -51,6 +52,11 @@ video_controller = VideoStreamController(
     release_cb=controller.disconnect_usrp,
     reconnect_cb=controller.reconnect_usrp,
 )
+operation_coordinator = RedisOperationCoordinator.from_url(
+    settings.redis_url,
+    record_ttl_seconds=settings.operation_record_ttl_seconds,
+    lease_seconds=settings.operation_lease_seconds,
+)
 
 # Build the single validated registry used by both local Agent Loop and MCP.
 tool_registry = create_tool_registry(
@@ -58,6 +64,7 @@ tool_registry = create_tool_registry(
     knowledge_base=knowledge_base,
     video_controller=video_controller,
     diagnostic_runner=diagnostic_runner,
+    operation_coordinator=operation_coordinator,
 )
 mcp_server = create_sdr_mcp(
     tool_registry=tool_registry,
@@ -110,6 +117,31 @@ class ChatRequest(BaseModel):
     session_id: str = Field(min_length=1)
     mode: str = "think"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    operation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+
+
+class ToolExecutionRequest(BaseModel):
+    operation_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class OperationRequest(BaseModel):
+    operation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
 
 
 class ResetSessionRequest(BaseModel):
@@ -165,12 +197,53 @@ def get_visualization_state() -> dict:
 
 
 @app.post("/api/hardware/stop")
-async def stop_hardware_task() -> dict:
-    video_result = video_controller.stop()
-    hw_result = controller.stop_hardware_task()
+async def stop_hardware_task(payload: OperationRequest | None = None) -> dict:
+    base_operation_id = (
+        payload.operation_id if payload and payload.operation_id else f"http-stop-{uuid.uuid4()}"
+    )
+    hw_result = await tool_registry.execute(
+        "stop_hardware_task", {}, operation_id=f"{base_operation_id}:hardware"
+    )
+    video_result = (
+        await tool_registry.execute(
+            "stop_video_stream", {}, operation_id=f"{base_operation_id}:video"
+        )
+        if tool_registry.has_tool("stop_video_stream")
+        else {"status": "success", "message": "视频工具未启用。"}
+    )
     # Flush any pending console completion — the USRP is now idle
     agent_loop._flush_pending_completion()
     return {"hardware": hw_result, "video_stream": video_result}
+
+
+@app.post("/api/tools/execute")
+async def execute_tool(payload: ToolExecutionRequest) -> dict:
+    """HTTP fallback and MCP share this ToolRegistry idempotency boundary."""
+    return await tool_registry.execute(
+        payload.tool_name,
+        payload.arguments,
+        operation_id=payload.operation_id,
+    )
+
+
+@app.get("/api/operations/{operation_id}")
+async def get_operation(operation_id: str) -> dict:
+    try:
+        return await operation_coordinator.get(operation_id)
+    except ValueError as exc:
+        return {
+            "status": "error",
+            "errorType": "INVALID_OPERATION_ID",
+            "operationId": operation_id,
+            "message": str(exc),
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "errorType": "IDEMPOTENCY_STORE_UNAVAILABLE",
+            "operationId": operation_id,
+            "message": str(exc),
+        }
 
 
 @app.post("/api/session/reset")
@@ -189,6 +262,7 @@ async def chat(payload: ChatRequest) -> dict:
     tool_logs: list[str] = []
     final_payload: dict[str, Any] = {}
     run_id = str(uuid.uuid4())
+    operation_id = payload.operation_id or f"http-chat-{uuid.uuid4()}"
 
     # Notify console synchronously — must arrive before run_stream starts
     await _post_console_event(
@@ -207,6 +281,7 @@ async def chat(payload: ChatRequest) -> dict:
             mode=payload.mode,
             temperature=payload.temperature,
             run_id=run_id,
+            operation_id=operation_id,
         ):
             t = event.get("type")
             if t == "delta" and event.get("text"):
@@ -227,6 +302,7 @@ async def chat(payload: ChatRequest) -> dict:
                     "active_temperature": agent_loop.resolve_temperature(
                         payload.mode, payload.temperature
                     ),
+                    "operationId": operation_id,
                 }
     except Exception as exc:
         return {
@@ -240,6 +316,7 @@ async def chat(payload: ChatRequest) -> dict:
             "active_temperature": agent_loop.resolve_temperature(
                 payload.mode, payload.temperature
             ),
+            "operationId": operation_id,
         }
 
     return {
@@ -260,6 +337,7 @@ async def chat(payload: ChatRequest) -> dict:
             agent_loop.resolve_temperature(payload.mode, payload.temperature),
         ),
         "timing": final_payload.get("timing"),
+        "operationId": operation_id,
     }
 
 
@@ -271,6 +349,7 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
         import asyncio as _asyncio
 
         run_id = str(uuid.uuid4())
+        operation_id = payload.operation_id or f"http-stream-{uuid.uuid4()}"
         # Notify console synchronously — must arrive before run_stream starts
         await _post_console_event(
             agent_id="usrp",
@@ -287,6 +366,7 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
             mode=payload.mode,
             temperature=payload.temperature,
             run_id=run_id,
+            operation_id=operation_id,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             # Force the event loop to flush after each delta so the browser
@@ -303,6 +383,11 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.on_event("shutdown")
+async def close_operation_store() -> None:
+    await operation_coordinator.close()
 
 
 # ── Mount MCP + static ────────────────────────────────────────────────────

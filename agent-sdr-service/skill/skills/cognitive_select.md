@@ -2,6 +2,8 @@
 name: auto_optimal_transmit
 description: 认知选频工具：搜索干净频点，然后在该频点执行文本发送或 Tone 可视化。
 category: hardware
+allowed_tools:
+  - auto_optimal_transmit
 trigger_patterns:
   - "干净.{0,3}(信道|频点|频段|频带)"
   - "最优.{0,3}(频点|频段|频带|信道)"
@@ -29,6 +31,12 @@ trigger_keywords:
 - tone_freq_hz：默认 100 kHz。
 - use_adaptive_modulation：用户要求"自适应"且没有指定固定调制方式时设为 true。
 - modulation_scheme：用户明确指定调制方式时设置（BPSK/QPSK/16-QAM），默认 2-FSK。
+
+## 服务端硬约束
+- center_freq_hz：1.2 GHz 到 6.0 GHz，整个搜索窗口也必须落在此范围内。
+- search_span_hz：5 MHz 到 100 MHz。
+- modulation_scheme：仅允许 2-FSK、BPSK、QPSK、16-QAM。
+- Tone 使用固定 1 MHz 采样率，tone_freq_hz 必须小于 500 kHz。
 
 ## 执行流程
 1. 在 center_freq_hz ± search_span_hz/2 范围内，以 5 MHz 步长扫描各候选频点

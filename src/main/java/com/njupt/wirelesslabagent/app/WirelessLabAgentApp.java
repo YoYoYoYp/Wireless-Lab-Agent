@@ -1,6 +1,7 @@
 package com.njupt.wirelesslabagent.app;
 
 import com.njupt.wirelesslabagent.common.RagStrategy;
+import com.njupt.wirelesslabagent.common.RouteLabel;
 import com.njupt.wirelesslabagent.config.ChatClientFactory;
 import com.njupt.wirelesslabagent.chatmemory.ConversationKeyFactory;
 import com.njupt.wirelesslabagent.service.QueryRoutingService;
@@ -81,6 +82,12 @@ public class WirelessLabAgentApp {
                         .param(CHAT_MEMORY_CONVERSATION_ID_KEY, scopedConversationId)
                         .param("userId", userId));
 
+        // Hardware tools are exposed only after the deterministic/model router
+        // has classified the request as DEVICE. A failed/unknown route therefore
+        // fails closed to knowledge answering instead of exposing USRP actions.
+        if (decision.label() != RouteLabel.DEVICE) {
+            return prompt.tools(webSearchTool).stream().content();
+        }
         if (mcpTools == null) {
             return prompt.tools(sdrHardwareTool, webSearchTool).stream().content();
         }

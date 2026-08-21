@@ -2,6 +2,8 @@
 name: text_fsk_send_and_receive
 description: 执行固定调制的文本无线收发。默认 2-FSK，支持 BPSK/QPSK/16-QAM。
 category: hardware
+allowed_tools:
+  - text_fsk_send_and_receive
 trigger_patterns:
   - "(发送|收发|传输|发射|送).{0,10}(文本|文字|消息|数据)"
   - "(发出去|发.{0,3}字|传.{0,3}消息)"
@@ -32,6 +34,13 @@ exclude_patterns:
 - rx_gain：默认 20 dB。
 - amp：默认 0.6。
 - packet_repetitions：默认 3。
+
+## 服务端硬约束
+- center_freq_hz：1.2 GHz 到 6.0 GHz。
+- modulation_scheme：仅允许 2-FSK、BPSK、QPSK、16-QAM。
+- tx_gain：0 到 31.5 dB；rx_gain：0 到 37.5 dB。
+- amp：0.01 到 1.0。
+- 采样率、符号率和 2-FSK 频偏必须满足服务端奈奎斯特与内存上限校验。
 
 ## 执行规则
 - 如果用户没有指定要发送的具体文本，你必须反问确认文本内容。

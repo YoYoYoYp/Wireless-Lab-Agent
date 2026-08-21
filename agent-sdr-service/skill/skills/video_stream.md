@@ -2,6 +2,11 @@
 name: start_video_stream
 description: 启动/停止/查询基于 GNU Radio + USRP 的 BPSK 视频流无线传输。
 category: hardware
+target_tool: start_video_stream
+allowed_tools:
+  - start_video_stream
+  - stop_video_stream
+  - video_stream_status
 trigger_patterns:
   - "(视频流|video\\.stream|video_stream|gnu\\.radio.*视频|vlc)"
 trigger_keywords:

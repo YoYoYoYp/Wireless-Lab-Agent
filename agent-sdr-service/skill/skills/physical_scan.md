@@ -2,6 +2,8 @@
 name: perform_physical_scan
 description: 扫噪/测底噪工具，测量目标频点附近的接收功率和噪声水平。
 category: hardware
+allowed_tools:
+  - perform_physical_scan
 trigger_patterns:
   - "扫描|扫频|底噪|频谱.*扫描|扫.{0,2}频"
 trigger_keywords:
@@ -22,6 +24,11 @@ trigger_keywords:
 - bandwidth_hz：默认 1 MHz。
 - duration_s：默认 0.2 秒。
 - chan：默认 0。
+
+## 服务端硬约束
+- center_freq_hz：1.2 GHz 到 6.0 GHz。
+- bandwidth_hz：100 kHz 到 40 MHz；chan 只能是 0 或 1。
+- bandwidth_hz × duration_s 最多产生 4,000,000 个采样点。
 
 ## 执行规则
 - 如果用户没有指定频率，使用默认值 2.4 GHz。

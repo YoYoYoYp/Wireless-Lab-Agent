@@ -61,6 +61,17 @@ class Settings(BaseModel):
         default=int(os.getenv("FAST_HISTORY_MESSAGES", "4"))
     )
 
+    # ── Cross-channel operation idempotency ──
+    redis_url: str = Field(
+        default=os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    )
+    operation_record_ttl_seconds: int = Field(
+        default=int(os.getenv("OPERATION_RECORD_TTL_SECONDS", "604800")), ge=60
+    )
+    operation_lease_seconds: int = Field(
+        default=int(os.getenv("OPERATION_LEASE_SECONDS", "300")), ge=10
+    )
+
     # ── Knowledge ──
     bailian_api_key: str = Field(default=os.getenv("BAILIAN_API_KEY", ""))
     bailian_app_id: str = Field(default=os.getenv("BAILIAN_APP_ID", ""))
